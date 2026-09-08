@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import PySide6
@@ -12,9 +13,10 @@ from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QTextEdit, QLineEdit, QProgressBar, QMessageBox,
-    QAbstractItemView)
+    QAbstractItemView, QCheckBox)
 
 ROOT = Path(__file__).resolve().parent.parent
+EXTENSIONS = {".svs", ".ndpi", ".tif", ".tiff", ".mrxs", ".scn", ".vms", ".vmu", ".bif", ".svslide", ".dcm", ".czi"}
 
 
 def configure_qt():
@@ -28,7 +30,7 @@ def configure_qt():
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WSI Anonymization · SVS / NDPI")
+        self.setWindowTitle("WSI Anonymization · Clean TIFF Export")
         self.resize(1240, 820)
         self.setMinimumSize(950, 680)
         self.paths, self.results, self.previews = [], {}, {}
@@ -47,8 +49,8 @@ class Window(QMainWindow):
         title = QLabel("WSI Anonymization")
         title.setObjectName("title")
         layout.addWidget(title)
-        layout.addWidget(QLabel("SVS · NDPI  |  원본을 보존하며 검사하고 검토용 사본을 만듭니다."))
-        notice = QLabel("개발 버전 · 사본은 검토가 필요합니다. NDPI는 4GB 미만, 라벨·매크로가 없는 파일부터 지원합니다.")
+        layout.addWidget(QLabel("WSI → TIFF  |  조직 영상만 읽어 새로운 무손실 피라미드 TIFF를 만듭니다."))
+        notice = QLabel("원본 메타데이터·라벨·매크로는 내보내지 않습니다. 조직 영상 안에 적힌 개인정보는 별도 검토가 필요합니다.")
         notice.setObjectName("notice")
         notice.setWordWrap(True)
         layout.addWidget(notice)
@@ -105,13 +107,16 @@ class Window(QMainWindow):
         self.open_button.clicked.connect(self.open_output)
         output_row.addWidget(self.open_button)
         layout.addLayout(output_row)
+        self.reviewed = QCheckBox("목록의 모든 조직 영상을 검토했으며 영상 속 개인정보가 없음을 확인했습니다.")
+        self.reviewed.setToolTip("사용자의 검토 확인을 기록합니다. 자동 개인정보 검출이나 인증을 의미하지 않습니다.")
+        layout.addWidget(self.reviewed)
         actions = QHBoxLayout()
         self.inspect_button = QPushButton("전체 검사")
         self.inspect_button.clicked.connect(lambda: self.start("inspect"))
-        self.copy_button = QPushButton("검토용 사본 만들기")
+        self.copy_button = QPushButton("비식별 TIFF 내보내기")
         self.copy_button.setObjectName("primary")
         self.copy_button.clicked.connect(lambda: self.start("copy"))
-        self.cancel_button = QPushButton("현재 파일 완료 후 중지")
+        self.cancel_button = QPushButton("중지")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel)
         actions.addWidget(self.inspect_button)
@@ -127,10 +132,11 @@ class Window(QMainWindow):
         layout.addWidget(self.status)
         self.controls = [self.add_button, self.folder_button, self.sample_button,
                          self.clear_button, self.inspect_button, self.copy_button,
-                         self.output_button, self.output]
+                         self.output_button, self.output, self.reviewed]
 
     def pick_files(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "WSI 파일 선택", str(ROOT / "data"), "WSI (*.svs *.ndpi)")
+        files, _ = QFileDialog.getOpenFileNames(self, "WSI 파일 선택", str(ROOT / "data"),
+                                               "WSI (" + " ".join("*" + e for e in sorted(EXTENSIONS)) + ");;모든 파일 (*)")
         self.add_paths(map(Path, files))
 
     def pick_folder(self):
@@ -146,7 +152,7 @@ class Window(QMainWindow):
             return
         for path in paths:
             path = path.resolve()
-            if path in self.paths or path.suffix.lower() not in {".svs", ".ndpi"}:
+            if path in self.paths or path.suffix.lower() not in EXTENSIONS:
                 continue
             try:
                 size = path.stat().st_size
@@ -154,6 +160,8 @@ class Window(QMainWindow):
                 continue
             row = len(self.paths)
             self.paths.append(path)
+            if hasattr(self, "reviewed"):
+                self.reviewed.setChecked(False)
             self.table.insertRow(row)
             for column, value in enumerate((path.name, path.suffix[1:].upper(), f"{size / 1e9:.2f} GB", "대기")):
                 self.table.setItem(row, column, QTableWidgetItem(value))
@@ -168,6 +176,7 @@ class Window(QMainWindow):
         self.table.setRowCount(0)
         self.preview.clear()
         self.details.clear()
+        self.reviewed.setChecked(False)
         self.status.setText("목록을 비웠습니다.")
 
     def pick_output(self):
@@ -193,7 +202,7 @@ class Window(QMainWindow):
         self.stop_requested = False
         self.completed = 0
         self.failed = 0
-        self.progress.setRange(0, len(self.queue))
+        self.progress.setRange(0, 1000)
         self.progress.setValue(0)
         for control in self.controls:
             control.setEnabled(False)
@@ -208,12 +217,13 @@ class Window(QMainWindow):
             self.cancel_button.setEnabled(False)
             prefix = "중지됨" if self.stop_requested else "작업 종료"
             self.status.setText(f"{prefix} · {self.completed}개 처리, {self.failed}개 실패" +
-                               (" · 생성된 사본은 검토가 필요합니다." if self.action == "copy" else ""))
+                               (" · TIFF 저장 및 검증 결과를 확인하세요." if self.action == "copy" else ""))
             return
         row = self.queue.pop(0)
         self.active_row = row
         self.had_result = False
         self.buffer = b""
+        self.cancel_file = ROOT / "artifacts" / "cancel" / (uuid.uuid4().hex + ".cancel")
         self.table.item(row, 3).setText("처리 중")
         self.process = QProcess(self)
         self.process.setProgram(str(Path(sys.executable).with_name("python.exe"))
@@ -226,7 +236,8 @@ class Window(QMainWindow):
         self.process.errorOccurred.connect(self.process_error)
         self.process.start()
         job = {"source": str(self.paths[row]), "action": self.action,
-               "output": self.output.text()}
+               "output": self.output.text(), "pixels_reviewed": self.reviewed.isChecked(),
+               "cancel_file": str(self.cancel_file)}
         self.process.write((json.dumps(job) + "\n").encode("utf-8"))
         self.process.closeWriteChannel()
 
@@ -248,6 +259,13 @@ class Window(QMainWindow):
         row = self.active_row
         if event["kind"] == "progress":
             self.status.setText(f"{row + 1}/{len(self.paths)} · {event['message']}")
+            if "percent" in event:
+                self.progress.setValue(int(1000 * (self.completed + event["percent"] / 100) / len(self.paths)))
+        elif event["kind"] == "cancelled":
+            self.had_result = True
+            self.table.item(row, 3).setText("중지됨")
+            self.results[row] = {"error": event["message"]}
+            self.show_selection()
         elif event["kind"] == "error":
             self.had_result = True
             self.failed += 1
@@ -259,7 +277,8 @@ class Window(QMainWindow):
             data = event["data"]
             self.results[row] = data
             if event["action"] == "copy":
-                state = "사본 생성 · 검토 필요"
+                state = ("TIFF 완료 · 영상 확인됨" if data["report"]["pixel_review_asserted_by_caller"]
+                         else "TIFF 완료 · 영상 검토 필요")
             else:
                 state = "읽기 검사 통과" if not data["errors"] else "검사 실패"
                 if data["errors"]:
@@ -274,7 +293,8 @@ class Window(QMainWindow):
         if not self.had_result:
             self.handle({"kind": "error", "message": f"작업 프로세스가 종료되었습니다. (코드 {code})"})
         self.completed += 1
-        self.progress.setValue(self.completed)
+        self.progress.setValue(int(1000 * self.completed / len(self.paths)))
+        self.cancel_file.unlink(missing_ok=True)
         old = self.process
         self.process = None
         old.deleteLater()
@@ -297,25 +317,36 @@ class Window(QMainWindow):
             self.details.setPlainText(data["error"])
             return
         report = data.get("report", data)
+        if "report" in data:
+            self.details.setPlainText("\n".join([
+                "형식: 무손실 피라미드 BigTIFF", f"영상 크기: {report['level_dimensions'][0]}",
+                f"영상 레벨: {len(report['level_dimensions'])}",
+                "메타데이터·부속 이미지: 원본에서 복사하지 않음",
+                f"전체 타일 픽셀 일치 검증: {report['verified_tiles']:,}개 통과",
+                "영상 개인정보 검토: " + ("사용자가 확인함" if report["pixel_review_asserted_by_caller"] else "추가 검토 필요"),
+                "", "원본 ICC는 제외되므로 색상 관리 뷰어에서 표시가 달라질 수 있습니다.",
+                "", f"저장 위치: {data['directory']}"]))
+            return
         slide = report.get("openslide", {})
         lines = [f"영상 크기: {slide.get('dimensions', '-')}",
                  f"영상 레벨: {len(slide.get('level_dimensions', []))}",
                  f"부속 이미지: {', '.join(slide.get('associated_images', {})) or 'OpenSlide 목록 없음'}",
                  f"검사 영역: {len(slide.get('decoded_regions', []))}개"]
-        if "report" in data:
-            lines += ["", "조직 압축 데이터: 원본과 일치", "상태: 검토 필요", "", *report["review_reasons"],
-                      "", f"저장 위치: {data['directory']}"]
-        else:
-            lines += ["", "전체 개인정보 검사는 아닙니다.", "", "메타데이터 항목 (값은 표시하지 않음)",
-                      *slide.get("property_keys", [])]
-            if report.get("errors"):
-                lines += ["", "오류: " + str(report["errors"])]
+        lines += ["", "전체 개인정보 검사는 아닙니다.", "", "메타데이터 항목 (값은 표시하지 않음)",
+                  *slide.get("property_keys", [])]
+        if report.get("errors"):
+            lines += ["", "오류: " + str(report["errors"])]
         self.details.setPlainText("\n".join(lines))
 
     def cancel(self):
         self.stop_requested = True
         self.cancel_button.setEnabled(False)
-        self.status.setText("현재 파일의 처리와 검증이 끝나면 중지합니다.")
+        if self.action == "copy":
+            self.cancel_file.parent.mkdir(parents=True, exist_ok=True)
+            self.cancel_file.touch()
+            self.status.setText("중지를 요청했습니다. 현재 타일 처리 후 임시 파일을 정리합니다.")
+        else:
+            self.status.setText("현재 파일의 검사가 끝나면 중지합니다.")
 
     def closeEvent(self, event):
         if self.process is not None:

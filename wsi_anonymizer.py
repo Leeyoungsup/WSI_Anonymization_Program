@@ -45,6 +45,9 @@ def _openslide():
             handle = os.add_dll_directory(str(Path(spec.origin).parent))
     try:
         import openslide
+        version = tuple(int(v) for v in openslide.__library_version__.split(".")[:3])
+        if version < (4, 0, 1):
+            raise RuntimeError("OpenSlide 4.0.1+ is required for correct TIFF edge-tile decoding")
     except Exception:
         if handle:
             handle.close()

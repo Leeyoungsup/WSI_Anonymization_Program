@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import tempfile
 import time
+import numpy as np
+import tifffile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "windows" if os.name == "nt" else "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -49,22 +51,43 @@ def main():
     (ROOT / "artifacts").mkdir(exist_ok=True)
     assert window.grab().save(str(ROOT / "artifacts/gui_inspection.png"))
     with tempfile.TemporaryDirectory(prefix="gui_test_", dir=ROOT / "artifacts") as folder:
-        window.output.setText(folder)
+        source_folder = Path(folder) / "input"
+        source_folder.mkdir()
+        sample = source_folder / "synthetic.tif"
+        tifffile.imwrite(sample, np.full((320, 530, 3), 160, dtype=np.uint8),
+                         tile=(128, 128), photometric="rgb", description="PRIVATE_SENTINEL")
+        window.clear_button.click()
+        window.add_paths([sample])
+        window.output.setText(str(Path(folder) / "output"))
         window.copy_button.click()
         wait(app, window)
         assert window.failed == 0, window.results
         for item in window.results.values():
             assert Path(item["file"]).is_file()
-            assert item["report"]["compressed_tissue_sha256_match"]
-            assert item["report"]["status"] == "review_required"
+            assert item["report"]["all_output_tiles_verified"]
+            assert item["report"]["status"] == "metadata_clean_pixel_review_required"
+            assert Path(item["file"]).suffix == ".tiff"
+            assert b"PRIVATE_SENTINEL" not in Path(item["file"]).read_bytes()
         assert not list(Path(folder).glob(".pending_*"))
-        print("GUI copies, compressed payload comparison and readback passed", flush=True)
-        window.output.setText(str(ROOT / "data"))
+        print("GUI TIFF export, metadata removal and pixel verification passed", flush=True)
+        window.reviewed.setChecked(True)
         window.copy_button.click()
         wait(app, window)
-        assert window.failed == 2, "Input folder output must be rejected"
+        assert window.results[0]["report"]["status"] == "metadata_clean_pixels_reviewed"
+        print("Caller pixel-review assertion propagation passed", flush=True)
+        window.output.setText(str(source_folder))
+        window.copy_button.click()
+        wait(app, window)
+        assert window.failed == 1, "Input folder output must be rejected"
         assert window.copy_button.isEnabled()
         print("Unsafe output path rejection and UI recovery passed", flush=True)
+        window.output.setText(str(Path(folder) / "output"))
+        window.copy_button.click()
+        window.cancel_button.click()
+        wait(app, window)
+        assert window.table.item(0, 3).text() == "중지됨"
+        assert not list((Path(folder) / "output").glob(".pending_*"))
+        print("TIFF cancellation and temporary-output cleanup passed", flush=True)
         window.inspect_button.click()
         window.cancel_button.click()
         wait(app, window)

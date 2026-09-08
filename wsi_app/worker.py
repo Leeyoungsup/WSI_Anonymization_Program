@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 from tools.inspect_samples import inspect, load_openslide
-from wsi_app.engine import create_review_copy, UnsupportedFormat
+from wsi_app.engine import create_anonymized_tiff
+from wsi_anonymizer import ExportCancelled
 
 
 def emit(kind, **payload):
@@ -21,8 +22,12 @@ def main():
         openslide, dll = load_openslide()
         path = Path(job["source"])
         if job["action"] == "copy":
-            result = create_review_copy(path, Path(job["output"]), openslide,
-                                        lambda message: emit("progress", message=message))
+            def progress(event):
+                stage = "TIFF 저장" if event["stage"] == "write" else "전체 타일 검증"
+                emit("progress", message=f"{stage} · {event['percent']}%", percent=event["percent"])
+            result = create_anonymized_tiff(
+                path, Path(job["output"]), pixels_reviewed=job.get("pixels_reviewed", False),
+                progress=progress, cancelled=lambda: Path(job["cancel_file"]).exists())
             emit("result", action="copy", data=result)
         else:
             emit("progress", message="구조 검사 및 영상 읽기")
@@ -36,9 +41,12 @@ def main():
                         preview = base64.b64encode(buffer.getvalue()).decode("ascii")
             emit("result", action="inspect", data=result, preview=preview)
         return 0
-    except (UnsupportedFormat, ValueError, OSError) as exc:
+    except ExportCancelled:
+        emit("cancelled", message="TIFF 내보내기를 중지했습니다. 미완성 파일은 정리했습니다.")
+        return 0
+    except (ValueError, OSError) as exc:
         # Known engine messages contain no raw metadata. OS errors may contain paths.
-        message = str(exc) if isinstance(exc, (UnsupportedFormat, ValueError)) else "파일 접근 또는 저장에 실패했습니다. 경로와 여유 공간을 확인하세요."
+        message = str(exc) if isinstance(exc, ValueError) else "파일 접근 또는 저장에 실패했습니다. 경로와 여유 공간을 확인하세요."
         emit("error", message=message, error_type=type(exc).__name__)
         return 1
     except Exception as exc:
