@@ -14,7 +14,7 @@ from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QTextEdit, QLineEdit, QProgressBar, QMessageBox,
-    QAbstractItemView, QCheckBox)
+    QAbstractItemView, QCheckBox, QGroupBox, QGridLayout, QComboBox, QToolButton)
 
 ROOT = Path(__file__).resolve().parent.parent
 EXTENSIONS = {".svs", ".ndpi", ".tif", ".tiff", ".mrxs", ".scn", ".vms", ".vmu", ".bif", ".svslide", ".dcm", ".czi"}
@@ -32,8 +32,8 @@ class Window(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("WSI Anonymization · Single TIFF + CSV")
-        self.resize(1240, 820)
-        self.setMinimumSize(950, 680)
+        self.resize(1240, 980)
+        self.setMinimumSize(1050, 850)
         self.paths, self.results, self.previews = [], {}, {}
         self.queue = []
         self.process = None
@@ -50,7 +50,7 @@ class Window(QMainWindow):
         title = QLabel("WSI Anonymization")
         title.setObjectName("title")
         layout.addWidget(title)
-        layout.addWidget(QLabel("WSI → TIFF  |  원본 JPEG 압축 유지 · 최대 해상도 한 장 · 날짜·시간 폴더와 CSV"))
+        layout.addWidget(QLabel("WSI Export  |  내보낼 항목을 선택하고 날짜·시간 폴더에 저장합니다."))
         notice = QLabel("원본 메타데이터·라벨·매크로는 내보내지 않습니다. 조직 영상 안에 적힌 개인정보는 별도 검토가 필요합니다.")
         notice.setObjectName("notice")
         notice.setWordWrap(True)
@@ -97,6 +97,44 @@ class Window(QMainWindow):
         splitter.addWidget(panel)
         splitter.setSizes([710, 430])
         layout.addWidget(splitter, 1)
+        self.options_box = QGroupBox("내보내기 옵션")
+        options = QGridLayout(self.options_box)
+        options.setHorizontalSpacing(32)
+        self.info_buttons = {}
+
+        def option(widget, key, title, explanation, row, column):
+            line = QHBoxLayout()
+            line.addWidget(widget)
+            info = QToolButton()
+            info.setText("i")
+            info.setObjectName("info")
+            info.setAccessibleName(title + " 설명")
+            info.setToolTip(title + " 설명 보기")
+            info.clicked.connect(lambda: QMessageBox.information(self, title, explanation))
+            self.info_buttons[key] = info
+            line.addWidget(info)
+            line.addStretch()
+            options.addLayout(line, row, column)
+
+        self.export_image = QCheckBox("TIFF 영상")
+        self.export_csv = QCheckBox("슬라이드 정보 CSV")
+        self.include_filename = QCheckBox("CSV에 원본 파일명 포함")
+        self.preserve_mpp = QCheckBox("TIFF에 MPP 보존")
+        for control in (self.export_image, self.export_csv, self.include_filename, self.preserve_mpp):
+            control.setChecked(True)
+        option(self.export_image, "image", "TIFF 영상", "최대 해상도 영상 한 장을 익명 파일명의 TIFF로 저장합니다. 축소 피라미드, 라벨, 매크로는 포함하지 않습니다.\n\n해제하면 TIFF 파일을 만들지 않고 선택한 CSV만 저장합니다.", 0, 0)
+        option(self.export_csv, "csv", "슬라이드 정보 CSV", "MPP(픽셀의 실제 크기), 영상 크기, 배율, 입력 형식, 파일 크기와 처리 결과를 CSV에 기록합니다. 환자명·검체 ID·스캔 날짜 등 원본 개인정보 태그는 포함하지 않습니다.\n\nCSV만 선택하면 영상을 변환하거나 픽셀 검증하지 않습니다.", 0, 1)
+        option(self.include_filename, "filename", "원본 파일명 포함", "CSV에 원본 파일명을 기록하여 결과와 대응시킵니다. 파일명 자체에 이름이나 환자 ID가 있으면 CSV에도 남습니다.\n\n해제하면 original_filename 열을 빈칸으로 저장합니다. TIFF 내부에는 원본 파일명을 기록하지 않습니다.", 1, 1)
+        option(self.preserve_mpp, "mpp", "TIFF에 MPP 보존", "MPP는 픽셀 하나의 실제 길이(µm/pixel)입니다. TIFF 해상도 정보에 기록하여 측정 도구가 실제 크기를 계산할 수 있게 합니다.\n\n해제해도 영상 픽셀 크기는 바뀌지 않습니다. CSV를 선택했다면 원본 MPP는 CSV에 기록됩니다.", 1, 0)
+        self.compression = QComboBox()
+        self.compression.addItem("원본 JPEG 압축 유지", "preserve")
+        self.compression.addItem("무손실 Deflate로 재저장", "lossless")
+        option(self.compression, "compression", "압축 방식", "원본 JPEG 압축 유지: 재압축 없이 압축 영상 데이터를 옮깁니다. 지원하지 않는 구조는 오류로 알리며 자동 재압축하지 않습니다.\n\n무손실 Deflate: 영상을 RGB로 풀어 무손실 저장합니다. 추가 JPEG 손실은 없지만 파일 크기가 크게 늘 수 있습니다.\n\n두 방식 모두 피라미드 없는 단일 TIFF입니다.", 2, 0)
+        option(QLabel("개인정보 메타데이터 제거 · 항상 적용"), "privacy", "익명화 범위", "TIFF에서 원본 개인정보 태그, 라벨·매크로·썸네일, ICC와 JPEG APP/COM 부가정보를 제외합니다.\n\n조직 영상에 직접 찍힌 이름이나 식별자는 자동으로 지워지지 않습니다. 아래 검토 확인은 사용자의 확인 기록이며 자동 익명화 인증이 아닙니다.", 2, 1)
+        self.options_hint = QLabel()
+        self.options_hint.setWordWrap(True)
+        options.addWidget(self.options_hint, 3, 0, 1, 2)
+        layout.addWidget(self.options_box)
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("출력 폴더"))
         self.output = QLineEdit(str(ROOT / "output"))
@@ -110,11 +148,23 @@ class Window(QMainWindow):
         layout.addLayout(output_row)
         self.reviewed = QCheckBox("목록의 모든 조직 영상을 검토했으며 영상 속 개인정보가 없음을 확인했습니다.")
         self.reviewed.setToolTip("사용자의 검토 확인을 기록합니다. 자동 개인정보 검출이나 인증을 의미하지 않습니다.")
-        layout.addWidget(self.reviewed)
+        review_line = QHBoxLayout()
+        review_line.addWidget(self.reviewed)
+        review_info = QToolButton()
+        review_info.setText("i")
+        review_info.setObjectName("info")
+        review_info.setAccessibleName("영상 검토 확인 설명")
+        review_info.setToolTip("영상 검토 확인 설명 보기")
+        review_info.clicked.connect(lambda: QMessageBox.information(self, "영상 검토 확인",
+            "사용자가 목록의 모든 조직 영상을 직접 검토했다는 확인을 결과에 기록합니다. 자동 개인정보 검출이나 인증을 의미하지 않습니다.\n\n확인하지 않아도 내보낼 수 있으며 TIFF 결과는 영상 검토 필요 상태로 기록됩니다."))
+        self.info_buttons["review"] = review_info
+        review_line.addWidget(review_info)
+        review_line.addStretch()
+        layout.addLayout(review_line)
         actions = QHBoxLayout()
         self.inspect_button = QPushButton("전체 검사")
         self.inspect_button.clicked.connect(lambda: self.start("inspect"))
-        self.copy_button = QPushButton("비식별 TIFF 내보내기")
+        self.copy_button = QPushButton("선택 항목 내보내기")
         self.copy_button.setObjectName("primary")
         self.copy_button.clicked.connect(lambda: self.start("copy"))
         self.cancel_button = QPushButton("중지")
@@ -133,7 +183,24 @@ class Window(QMainWindow):
         layout.addWidget(self.status)
         self.controls = [self.add_button, self.folder_button, self.sample_button,
                          self.clear_button, self.inspect_button, self.copy_button,
-                         self.output_button, self.output, self.reviewed]
+                         self.output_button, self.output, self.reviewed, self.options_box]
+        self.export_image.toggled.connect(self.update_options)
+        self.export_csv.toggled.connect(self.update_options)
+        self.update_options()
+
+    def update_options(self):
+        images, csv = self.export_image.isChecked(), self.export_csv.isChecked()
+        self.include_filename.setEnabled(csv)
+        self.preserve_mpp.setEnabled(images)
+        self.compression.setEnabled(images)
+        self.copy_button.setEnabled(self.process is None and (images or csv))
+        self.options_hint.setText("TIFF 또는 CSV를 하나 이상 선택하세요." if not (images or csv)
+                                  else "선택한 항목은 같은 날짜·시간 폴더에 저장됩니다. i 버튼에서 설명을 확인하세요.")
+
+    def export_options(self):
+        return {"export_image": self.export_image.isChecked(), "export_csv": self.export_csv.isChecked(),
+                "include_filename": self.include_filename.isChecked(), "preserve_mpp": self.preserve_mpp.isChecked(),
+                "compression": self.compression.currentData()}
 
     def pick_files(self):
         files, _ = QFileDialog.getOpenFileNames(self, "WSI 파일 선택", str(ROOT / "data"),
@@ -178,6 +245,7 @@ class Window(QMainWindow):
         self.preview.clear()
         self.details.clear()
         self.reviewed.setChecked(False)
+        self.progress.setValue(0)
         self.status.setText("목록을 비웠습니다.")
 
     def pick_output(self):
@@ -194,6 +262,9 @@ class Window(QMainWindow):
 
     def start(self, action):
         if self.process is not None or not self.paths:
+            return
+        if action == "copy" and not (self.export_image.isChecked() or self.export_csv.isChecked()):
+            self.update_options()
             return
         if action == "copy" and not self.output.text().strip():
             self.status.setText("출력 폴더를 선택하세요.")
@@ -217,9 +288,10 @@ class Window(QMainWindow):
             for control in self.controls:
                 control.setEnabled(True)
             self.cancel_button.setEnabled(False)
+            self.update_options()
             prefix = "중지됨" if self.stop_requested else "작업 종료"
             self.status.setText(f"{prefix} · {self.completed}개 처리, {self.failed}개 실패" +
-                               (" · TIFF 저장 및 검증 결과를 확인하세요." if self.action == "copy" else ""))
+                               (" · 선택 항목의 저장 결과를 확인하세요." if self.action == "copy" else ""))
             return
         row = self.queue.pop(0)
         self.active_row = row
@@ -241,6 +313,7 @@ class Window(QMainWindow):
                "output": self.output.text(), "pixels_reviewed": self.reviewed.isChecked(),
                "run_id": self.run_id,
                "cancel_file": str(self.cancel_file)}
+        job.update(self.export_options())
         self.process.write((json.dumps(job) + "\n").encode("utf-8"))
         self.process.closeWriteChannel()
 
@@ -283,6 +356,8 @@ class Window(QMainWindow):
                 self.last_export_folder = Path(data["directory"])
                 state = ("TIFF 완료 · 영상 확인됨" if data["report"]["pixel_review_asserted_by_caller"]
                          else "TIFF 완료 · 영상 검토 필요")
+                if data["report"]["format"] == "csv-only":
+                    state = "CSV 완료 · 영상 변환 없음"
             else:
                 state = "읽기 검사 통과" if not data["errors"] else "검사 실패"
                 if data["errors"]:
@@ -322,15 +397,21 @@ class Window(QMainWindow):
             return
         report = data.get("report", data)
         if "report" in data:
+            if report["format"] == "csv-only":
+                self.details.setPlainText("\n".join(["슬라이드 정보 CSV 저장 완료", "영상 변환·픽셀 검증은 수행하지 않았습니다.",
+                    f"영상 크기: {report['level_dimensions'][0]}", f"저장 위치: {data['directory']}",
+                    f"기술 정보: {Path(data['csv_path']).name}"]))
+                return
             self.details.setPlainText("\n".join([
                 "형식: 최대 해상도 단일 영상 TIFF", f"영상 크기: {report['level_dimensions'][0]}",
                 "영상 수: 1장 (축소 피라미드 없음)",
                 "메타데이터·부속 이미지: 원본에서 복사하지 않음",
-                f"전체 타일 픽셀 일치 검증: {report['verified_tiles']:,}개 통과",
+                "압축: " + ("원본 JPEG 유지" if report["compression"] == "jpeg-preserved" else "무손실 Deflate"),
+                f"전체 타일 검증: {report['verified_tiles']:,}개 통과",
                 "영상 개인정보 검토: " + ("사용자가 확인함" if report["pixel_review_asserted_by_caller"] else "추가 검토 필요"),
                 "", "원본 ICC는 제외되므로 색상 관리 뷰어에서 표시가 달라질 수 있습니다.",
                 "", f"저장 위치: {data['directory']}",
-                f"기술 정보: {Path(data['csv_path']).name} (원본 파일명·MPP·크기 등)"]))
+                "기술 정보: " + (Path(data['csv_path']).name if data.get("csv_path") else "CSV 저장 안 함")]))
             return
         slide = report.get("openslide", {})
         if slide.get("thumbnail_skip_reason"):
@@ -386,6 +467,10 @@ QPushButton:hover { background: #e5eff5; }
 QPushButton:disabled { color: #93a0ad; background: #edf0f3; }
 QPushButton#primary { background: #087e83; color: white; border: none; }
 QPushButton#primary:disabled { background: #91b8ba; }
+QGroupBox { border: 1px solid #ced8e3; border-radius: 8px; margin-top: 12px; padding: 14px 10px 6px; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; font-weight: bold; }
+QToolButton#info { background: #e0f0f0; color: #087e83; border: 1px solid #9ac6c7; border-radius: 10px; min-width: 20px; max-width: 20px; min-height: 20px; max-height: 20px; font-weight: bold; }
+QComboBox { background: white; padding: 5px; border: 1px solid #ced8e3; border-radius: 4px; }
 QTableWidget, QTextEdit, QLineEdit { background: white; border: 1px solid #dce3ec; border-radius: 6px; padding: 6px; }
 QHeaderView::section { background: #e7edf4; padding: 10px; border: none; font-weight: bold; }
 QTableWidget::item { padding: 4px; }

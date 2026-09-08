@@ -84,17 +84,16 @@ def _record_csv(folder, row):
     try:
         rows = []
         # Excel can keep the canonical CSV locked while more slides finish.
-        # Merge previous complete snapshots so later exports never lose a row.
+        # Continue from the newest complete snapshot, including CSV-only rows.
         manifests = ([manifest] if manifest.exists() else []) + list(folder.glob("metadata_*.csv"))
-        by_output = {}
         for previous in sorted(manifests, key=lambda p: p.stat().st_mtime_ns):
             with previous.open("r", encoding="utf-8-sig", newline="") as stream:
                 reader = csv.DictReader(stream)
                 if reader.fieldnames != list(CSV_FIELDS):
                     raise ValueError("Existing metadata.csv has an unexpected schema")
-                for previous_row in reader:
-                    by_output[previous_row["output_filename"]] = previous_row
-        rows = list(by_output.values())
+                # Each file is a complete snapshot, including CSV-only exports
+                # whose filename fields may both be blank.
+                rows = list(reader)
         # Prevent spreadsheet formulas in a filename; normal filenames are exact.
         if row["original_filename"].lstrip().startswith(("=", "+", "-", "@")):
             row = dict(row, original_filename="'" + row["original_filename"])
@@ -386,6 +385,9 @@ def anonymize_wsi(
     *,
     run_id: str | None = None,
     compression: str = "preserve",
+    export_image: bool = True,
+    export_csv: bool = True,
+    include_filename: bool = True,
     redactions: Sequence[Sequence[int]] = (),
     pixels_reviewed: bool = False,
     preserve_mpp: bool = True,
@@ -404,6 +406,11 @@ def anonymize_wsi(
         Supports self-contained baseline YCbCr JPEG TIFF tiles and indexed NDPI
         with 1x1 component sampling, full restart rows, and compatible geometry.
         Other layouts raise ValueError. 'lossless' explicitly uses RGB/Deflate.
+    export_image, export_csv: choose TIFF, CSV, or both (default). At least one
+        must be True. CSV-only mode reads technical metadata without conversion
+        or pixel validation; output_path is None. Without CSV, csv_path is None.
+    include_filename: include the original basename in CSV (default True).
+        False leaves that field empty; output TIFF names remain anonymous.
     redactions: (x, y, width, height), painted white; requires 'lossless' mode.
     pixels_reviewed: caller confirms no identifiers remain outside supplied masks.
     preserve_mpp: copy only finite positive numeric microns-per-pixel calibration.
@@ -431,6 +438,10 @@ def anonymize_wsi(
     starting with spreadsheet formula characters are prefixed with an apostrophe.
     """
     source = Path(input_path).expanduser().resolve(strict=True)
+    if not all(isinstance(v, bool) for v in (export_image, export_csv, include_filename)):
+        raise TypeError("Export options must be boolean")
+    if not export_image and not export_csv:
+        raise ValueError("Select TIFF image or CSV information to export")
     if not source.is_file():
         raise ValueError("Input must be a WSI file")
     base = Path(output_dir).expanduser().resolve() if output_dir is not None else source.parent / "output"
@@ -483,6 +494,31 @@ def anonymize_wsi(
             total = sum(tiles_per_level)
             folder = _run_folder(base, run_id)
             target = folder / ("anonymous_" + uuid.uuid4().hex + ".tiff")
+            if not export_image:
+                emit("write", 0, 1)
+                row = {
+                    "original_filename": source.name if include_filename else "",
+                    "source_format": source.suffix.lower(),
+                    "mpp_x_um": source_mpp[0], "mpp_y_um": source_mpp[1],
+                    "width_px": dimensions[0][0], "height_px": dimensions[0][1],
+                    "objective_power": objective, "source_level_count": source_level_count,
+                    "output_pages": 0, "source_size_bytes": stat_before.st_size,
+                    "output_size_bytes": 0, "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "status": "technical_metadata_only", "verified_tiles": 0,
+                    "pixel_review_asserted_by_caller": pixels_reviewed,
+                }
+                emit("verify", 1, 1)
+                stat_after = source.stat()
+                if (stat_before.st_size, stat_before.st_mtime_ns) != (stat_after.st_size, stat_after.st_mtime_ns):
+                    raise ValueError("Input changed during export")
+                if cancelled is not None and cancelled():
+                    raise ExportCancelled("Export cancelled")
+                csv_path = _record_csv(folder, row)
+                return {"output_path": None, "directory": str(folder), "csv_path": str(csv_path),
+                        "format": "csv-only", "status": "technical_metadata_only",
+                        "level_dimensions": [list(d) for d in dimensions], "verified_tiles": 0,
+                        "pixel_review_asserted_by_caller": pixels_reviewed, "size_bytes": 0,
+                        "compression": None, "mpp": list(source_mpp)}
             fd, name = tempfile.mkstemp(prefix=".wsi_", suffix=".partial.tiff", dir=target.parent)
             os.close(fd)
             temporary = Path(name)
@@ -605,7 +641,7 @@ def anonymize_wsi(
                 "size_bytes": target.stat().st_size,
             }
             row = {
-                "original_filename": source.name, "output_filename": target.name,
+                "original_filename": source.name if include_filename else "", "output_filename": target.name,
                 "source_format": source.suffix.lower(), "mpp_x_um": source_mpp[0], "mpp_y_um": source_mpp[1],
                 "width_px": dimensions[0][0], "height_px": dimensions[0][1],
                 "objective_power": objective, "source_level_count": source_level_count, "output_pages": 1,
@@ -615,7 +651,7 @@ def anonymize_wsi(
                 "pixel_review_asserted_by_caller": pixels_reviewed,
             }
             try:
-                result["csv_path"] = str(_record_csv(folder, row))
+                result["csv_path"] = str(_record_csv(folder, row)) if export_csv else None
             except Exception:
                 target.unlink()  # This call's newly created file only.
                 raise
