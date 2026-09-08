@@ -39,7 +39,7 @@ for source in sorted((root / "data").iterdir()):
     with tifffile.TiffFile(result["output_path"]) as tif:
         assert len(tif.pages) >= 3 and all(p.is_tiled and not p.subifds for p in tif.pages)
         assert tif.pages[0].compression == 7
-        assert json.loads(tif.pages[0].description) == result["technical_metadata"]
+        assert json.loads(tif.pages[0].description.split("|WSI_Technical=", 1)[1]) == result["technical_metadata"]
     assert result["objective_power"] == 40
     technical = result["technical_metadata"]
     assert technical["physical_width_mm"] == technical["width_px"] * technical["mpp_x_um"] / 1000

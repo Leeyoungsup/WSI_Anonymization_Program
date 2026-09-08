@@ -39,6 +39,22 @@ class StandaloneTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_keep_filename_and_collision_preserve_existing_output(self):
+        kwargs = dict(run_id="20260909_120000_000000", rename_output=False, include_filename=False)
+        first = anonymize_wsi(self.source, self.root / "out", **kwargs)
+        path = Path(first["output_path"])
+        self.assertEqual(path.name, self.source.stem + ".tiff")
+        digest = hashlib.sha256(path.read_bytes()).digest()
+        second = anonymize_wsi(self.source, self.root / "out", **kwargs)
+        self.assertEqual(Path(second["output_path"]).name, self.source.stem + "_2.tiff")
+        self.assertEqual(hashlib.sha256(path.read_bytes()).digest(), digest)
+        self.assertNotIn(self.source.stem.encode(), path.read_bytes())
+        with open(second["csv_path"], encoding="utf-8-sig", newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        self.assertEqual([r["original_filename"] for r in rows], ["", ""])
+        self.assertEqual([r["output_filename"] for r in rows], [path.name, Path(second["output_path"]).name])
+        self.assertEqual(hashlib.sha256(self.source.read_bytes()).hexdigest(), self.original_hash)
+
     def test_single_image_metadata_pixels_and_csv(self):
         result = anonymize_wsi(self.source, self.root / "output", redactions=[(120, 110, 40, 50)],
                                tile_size=128, pixels_reviewed=True)
@@ -54,7 +70,7 @@ class StandaloneTests(unittest.TestCase):
             np.testing.assert_array_equal(tif.pages[0].asarray(), expected)
             for page in tif.pages:
                 self.assertEqual([t.code for t in page.tags.values() if int(t.dtype) == 2], [270])
-                self.assertEqual(json.loads(page.description), result["technical_metadata"])
+                self.assertEqual(json.loads(page.description.split("|WSI_Technical=", 1)[1]), result["technical_metadata"])
         self.assertEqual(hashlib.sha256(self.source.read_bytes()).hexdigest(), self.original_hash)
         with Path(result["csv_path"]).open(encoding="utf-8-sig", newline="") as stream:
             rows = list(csv.DictReader(stream))

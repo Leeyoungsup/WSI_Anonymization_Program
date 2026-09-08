@@ -4,11 +4,23 @@ SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도�
 
 ## Windows EXE
 
-`release/WSI_Anonymization-1.1.1-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
+`release/WSI_Anonymization-1.2.0-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
+
+**출력 파일명을 익명 이름으로 변경**은 기본 체크입니다. 해제하면 원본 이름에 `.tiff` 확장자를 붙이며 중복 이름은 `_2`, `_3` 등을 붙입니다. 기존 파일은 덮어쓰지 않습니다. 원본 파일명에 식별자가 있으면 결과 파일명에도 남습니다. CSV의 원본 파일명 포함 옵션과는 독립적입니다. API에서는 `rename_output=False`, CLI에서는 `--keep-filename`을 사용합니다.
+
+1.2.0부터 Aperio 호환 설명을 사용하는 타일 TIFF로 저장합니다. OpenSlide vendor는 `aperio`이며 이는 출력 호환 형식으로서 원본 스캐너 제조사를 뜻하지 않습니다. 원본 배율이 있으면 아래 키로 직접 읽힙니다. 이전 출력은 재변환해야 합니다.
+
+```python
+import openslide
+with openslide.OpenSlide('output.tiff') as slide:
+    magnification = slide.properties.get('openslide.objective-power')  # 예: '40'
+```
 
 TIFF와 CSV에는 Magnification(원본 대물렌즈 배율), Pixel Size(전체 영상 가로·세로 픽셀 수), MPP(X/Y, µm/pixel), Physical Size(전체 영상 영역 가로·세로, mm)를 저장합니다. Physical Size는 픽셀 수 × MPP / 1000으로 계산하며 조직만의 크기가 아닙니다. 배율이나 MPP가 없으면 추정하지 않습니다.
 
-TIFF 기본 페이지의 ImageDescription은 검증한 숫자만으로 새로 만든 `wsi-technical-v1` JSON입니다. 원본 설명문은 복사하지 않습니다. MPP는 표준 해상도 태그에도 기록하며, MPP 보존을 해제하면 TIFF의 MPP와 Physical Size는 null로 기록합니다. 이 프로그램은 배율을 다시 읽어 표시하지만 외부 뷰어의 자동 배율 표시는 해당 뷰어 지원에 따라 다릅니다. API 결과의 `technical_metadata`에서 네 항목을 확인할 수 있습니다.
+TIFF 기본 페이지의 ImageDescription에는 고정된 호환 형식 표기, 숫자 AppMag, 해당되는 경우 MPP, 그리고 WSI_Technical의 `wsi-technical-v1` JSON만 새로 작성합니다. 원본 설명문은 복사하지 않습니다. API 결과의 `technical_metadata`에서 네 항목을 확인할 수 있습니다.
+
+MPP는 표준 XResolution/YResolution 태그 및 기술 JSON·CSV에 정확한 X/Y 값을 유지합니다. Aperio OpenSlide 백엔드는 단일 MPP를 두 축에 사용하므로 X/Y가 같은 경우에만 `openslide.mpp-x`와 `openslide.mpp-y`를 제공합니다. 서로 다른 경우(현재 NDPI 샘플 포함)는 잘못된 값이 나오지 않도록 두 OpenSlide 키를 생략하며, 이 프로그램은 기술 JSON에서 정확한 두 값을 읽습니다. MPP 보존을 해제하면 TIFF의 MPP와 Physical Size도 생략합니다. 배율이 없는 원본은 배율 키를 만들지 않습니다.
 
 파일 추가 또는 드래그 → 옵션 선택 → 출력 폴더 선택 → **선택 항목 내보내기** 순서입니다. 각 항목 옆 **i** 버튼에서 설명을 확인할 수 있습니다.
 

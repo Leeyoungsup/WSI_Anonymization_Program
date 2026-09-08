@@ -51,10 +51,37 @@ CSV_FIELDS = (
 
 def _numeric_property(slide, key):
     try:
-        value = float(slide.properties[key])
+        value = slide.properties.get(key)
+        if value is None and key in ("openslide.mpp-x", "openslide.mpp-y"):
+            data = _read_technical_description(slide.properties.get("tiff.ImageDescription", ""))
+            value = data.get("mpp_x_um" if key.endswith("-x") else "mpp_y_um")
+        if isinstance(value, bool):
+            return None
+        value = float(value)
         return value if math.isfinite(value) and 0.000001 <= value <= 100000 else None
     except (KeyError, ValueError, TypeError):
         return None
+
+
+def _read_technical_description(description):
+    try:
+        if description.startswith("Aperio compatible WSI Anonymization|"):
+            description = description.split("|WSI_Technical=", 1)[1]
+        data = json.loads(description)
+        return data if isinstance(data, dict) and data.get("schema") == "wsi-technical-v1" else {}
+    except (ValueError, TypeError, IndexError):
+        return {}
+
+
+def _technical_description(data):
+    parts = ["Aperio compatible WSI Anonymization"]
+    if data["objective_power"] is not None:
+        parts.append(f"AppMag={data['objective_power']:.17g}")
+    x, y = data["mpp_x_um"], data["mpp_y_um"]
+    if x is not None and x == y:
+        parts.append(f"MPP={x:.17g}")
+    parts.append("WSI_Technical=" + json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False))
+    return "|".join(parts)
 
 
 def _objective_power(slide):
@@ -62,7 +89,7 @@ def _objective_power(slide):
     if value is not None:
         return value
     try:
-        data = json.loads(slide.properties.get("tiff.ImageDescription", ""))
+        data = _read_technical_description(slide.properties.get("tiff.ImageDescription", ""))
         if data.get("schema") != "wsi-technical-v1":
             return None
         value = data.get("objective_power")
@@ -559,6 +586,7 @@ def anonymize_wsi(
     export_image: bool = True,
     export_csv: bool = True,
     include_filename: bool = True,
+    rename_output: bool = True,
     redactions: Sequence[Sequence[int]] = (),
     pixels_reviewed: bool = False,
     preserve_mpp: bool = True,
@@ -585,6 +613,8 @@ def anonymize_wsi(
         must be True. CSV-only mode reads technical metadata without conversion
         or pixel validation; output_path is None. Without CSV, csv_path is None.
     include_filename: include the original basename in CSV (default True).
+    rename_output: use an anonymous UUID filename (default True); False keeps
+        the source stem with .tiff. Collisions receive _2, _3, etc.; never overwrite.
         False leaves that field empty; output TIFF names remain anonymous.
     redactions: (x, y, width, height), painted white; requires 'lossless' mode.
     pixels_reviewed: caller confirms no identifiers remain outside supplied masks.
@@ -613,7 +643,7 @@ def anonymize_wsi(
     starting with spreadsheet formula characters are prefixed with an apostrophe.
     """
     source = Path(input_path).expanduser().resolve(strict=True)
-    if not all(isinstance(v, bool) for v in (export_image, export_csv, include_filename, pyramid)):
+    if not all(isinstance(v, bool) for v in (export_image, export_csv, include_filename, rename_output, pyramid)):
         raise TypeError("Export options must be boolean")
     if not export_image and not export_csv:
         raise ValueError("Select TIFF image or CSV information to export")
@@ -670,12 +700,13 @@ def anonymize_wsi(
             technical = _technical_metadata(dimensions[0], mpp, objective)
             source_technical = _technical_metadata(dimensions[0], source_mpp, objective)
             physical = {key: source_technical[key] for key in ("physical_width_mm", "physical_height_mm")}
-            description = json.dumps(technical, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            description = _technical_description(technical)
             tiles_per_level = [math.ceil(w / tile_size) * math.ceil(h / tile_size)
                                for w, h in dimensions]
             total = sum(tiles_per_level)
             folder = _run_folder(base, run_id)
-            target = folder / ("anonymous_" + uuid.uuid4().hex + ".tiff")
+            output_stem = "anonymous_" + uuid.uuid4().hex if rename_output else source.stem
+            target = folder / (output_stem + ".tiff")
             if not export_image:
                 emit("write", 0, 1)
                 row = {
@@ -784,11 +815,11 @@ def anonymize_wsi(
             with openslide.OpenSlide(str(temporary)) as check:
                 if list(check.level_dimensions) != dimensions or check.associated_images:
                     raise ValueError("Output pyramid/level readback failed")
-                if check.properties.get("openslide.vendor") != "generic-tiff":
-                    raise ValueError("Output is not a generic tiled TIFF")
+                if check.properties.get("openslide.vendor") != "aperio":
+                    raise ValueError("Output is not an Aperio-compatible tiled TIFF")
                 with check.read_region((0, 0), 0, (64, 64)) as region:
                     region.load()
-                if _objective_power(check) != objective:
+                if _numeric_property(check, "openslide.objective-power") != objective:
                     raise ValueError("Output objective-power validation failed")
                 if pyramid:
                     with check.get_thumbnail((512, 512)) as thumbnail:
@@ -814,11 +845,20 @@ def anonymize_wsi(
             if cancelled is not None and cancelled():
                 raise ExportCancelled("Export cancelled")
             # Atomic no-clobber publication on both Windows and POSIX.
-            if os.name == "nt":
-                os.rename(temporary, target)
-            else:
-                os.link(temporary, target)
-                temporary.unlink()
+            suffix = 1
+            while True:
+                try:
+                    if os.name == "nt":
+                        os.rename(temporary, target)
+                    else:
+                        os.link(temporary, target)
+                        temporary.unlink()
+                    break
+                except FileExistsError:
+                    if rename_output:
+                        raise
+                    suffix += 1
+                    target = folder / f"{output_stem}_{suffix}.tiff"
             temporary = None
             result = {
                 "output_path": str(target), "directory": str(folder),
@@ -829,6 +869,7 @@ def anonymize_wsi(
                 "metadata_clean": True, "pixel_review_asserted_by_caller": pixels_reviewed,
                 "redaction_count": len(boxes), "level_dimensions": [list(d) for d in dimensions],
                 "objective_power": objective,
+                "rename_output": rename_output,
                 "technical_metadata": technical,
                 "mpp": list(mpp) if mpp else None, "compression": "jpeg-preserved" if compression == "preserve" else "deflate-lossless",
                 "all_output_tiles_verified": True, "verified_tiles": verified,
@@ -873,6 +914,7 @@ def _main():
     parser.add_argument("output", nargs="?")
     parser.add_argument("--compression", choices=("preserve", "lossless"), default="preserve")
     parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
+    parser.add_argument("--keep-filename", action="store_true", help="Keep source basename with .tiff extension")
     parser.add_argument("--pixels-reviewed", action="store_true")
     parser.add_argument("--redact", type=int, nargs=4, action="append", default=[], metavar=("X", "Y", "W", "H"))
     args = parser.parse_args()
@@ -886,7 +928,7 @@ def _main():
 
     result = anonymize_wsi(args.input, args.output, redactions=args.redact,
                            pixels_reviewed=args.pixels_reviewed, compression=args.compression,
-                           pyramid=not args.single_image, progress=show_progress)
+                           pyramid=not args.single_image, rename_output=not args.keep_filename, progress=show_progress)
     print(json.dumps(result, ensure_ascii=True, indent=2))
 
 

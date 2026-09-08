@@ -38,6 +38,7 @@ with tempfile.TemporaryDirectory(dir=ROOT / "artifacts") as folder:
     w.add_folder(inputs)
     w.output.setText(str(root / "out"))
     w.export_image.setChecked(False)
+    assert not w.rename_output.isEnabled()
     w.export_csv.setChecked(False)
     assert not w.copy_button.isEnabled()
     w.start("copy")
@@ -57,12 +58,15 @@ with tempfile.TemporaryDirectory(dir=ROOT / "artifacts") as folder:
     assert "CSV" in w.details.toPlainText()
     assert all(label in w.details.toPlainText() for label in ("Magnification:", "Pixel Size:", "MPP:", "Physical Size:"))
     w.export_image.setChecked(True)
+    assert w.rename_output.isEnabled() and w.rename_output.isChecked()
+    w.rename_output.setChecked(False)
     w.export_csv.setChecked(False)
     w.preserve_mpp.setChecked(False)
     w.compression.setCurrentIndex(1)
     w.copy_button.click()
     wait(app,w)
     for result in w.results.values():
+        assert Path(result["file"]).name in ("patient_a.tiff", "patient_b.tiff")
         assert result["csv_path"] is None
         assert result["report"]["compression"]=="deflate-lossless"
         assert result["report"]["mpp"] is None

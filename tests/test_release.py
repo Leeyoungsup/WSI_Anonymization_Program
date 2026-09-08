@@ -9,6 +9,7 @@ import sys
 import tempfile
 import numpy as np
 import tifffile
+import openslide
 
 ROOT = Path(__file__).resolve().parents[1]
 exe = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "dist" / "WSI_Anonymization.exe"
@@ -51,15 +52,20 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     assert preserved["report"]["generated_levels"] == 1
     assert preserved["report"]["thumbnail_verified"] is True
     assert preserved["report"]["objective_power"] == 40
+    with openslide.OpenSlide(preserved["file"]) as slide:
+        assert slide.properties["openslide.objective-power"] == "40"
+        assert slide.properties["openslide.vendor"] == "aperio"
     technical = preserved["report"]["technical_metadata"]
     assert technical["width_px"] == 2048 and technical["height_px"] == 1024
     assert technical["mpp_x_um"] == .25 and technical["mpp_y_um"] == .5
     assert technical["physical_width_mm"] == .512 and technical["physical_height_mm"] == .512
     with tifffile.TiffFile(preserved["file"]) as tif:
-        assert json.loads(tif.pages[0].description) == technical
+        assert json.loads(tif.pages[0].description.split("|WSI_Technical=", 1)[1]) == technical
     assert b"PATIENT_SENTINEL" not in Path(preserved["file"]).read_bytes()
     np.testing.assert_array_equal(tifffile.imread(source), tifffile.imread(preserved["file"]))
     lossless = run(compression="lossless", export_csv=False)["data"]
+    named = run(rename_output=False)["data"]
+    assert Path(named["file"]).name == "synthetic.tiff"
     assert lossless["csv_path"] is None
     assert lossless["report"]["compression"] == "deflate-lossless"
     csv_only = run(export_image=False, include_filename=False)["data"]

@@ -42,7 +42,7 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WSI Anonymization 1.1.1 · Pyramidal TIFF + CSV")
+        self.setWindowTitle("WSI Anonymization 1.2.0 · Pyramidal TIFF + CSV")
         self.resize(1240, 980)
         self.setMinimumSize(1050, 850)
         self.paths, self.results, self.previews = [], {}, {}
@@ -135,6 +135,8 @@ class Window(QMainWindow):
         self.export_image = QCheckBox("TIFF 영상")
         self.export_csv = QCheckBox("슬라이드 정보 CSV")
         self.include_filename = QCheckBox("CSV에 원본 파일명 포함")
+        self.rename_output = QCheckBox("출력 파일명을 익명 이름으로 변경")
+        self.rename_output.setChecked(True)
         self.preserve_mpp = QCheckBox("TIFF에 MPP 보존")
         for control in (self.export_image, self.export_csv, self.include_filename, self.preserve_mpp):
             control.setChecked(True)
@@ -152,6 +154,7 @@ class Window(QMainWindow):
         self.structure.addItem("단일 해상도 TIFF", False)
         option(self.structure, "structure", "출력 구조", "표준 피라미드 TIFF: 최대 해상도와 조직 축소 레벨을 함께 저장합니다. OpenSlide의 get_thumbnail()과 확대·축소 보기에 사용할 수 있습니다.\n\n단일 해상도 TIFF: 최대 해상도만 저장합니다. 큰 영상의 get_thumbnail()은 많은 메모리가 필요할 수 있습니다.\n\n두 구조 모두 개인정보 메타데이터 제거를 적용합니다. 영상에 직접 찍힌 식별자는 별도 검토가 필요합니다.", 3, 0)
         self.options_hint = QLabel()
+        option(self.rename_output, "rename", "출력 파일명 변경", "체크: anonymous_<임의 ID>.tiff로 저장합니다.\n해제: 원본 이름을 유지하고 확장자만 .tiff로 바꿉니다. 같은 이름이 있으면 _2, _3 등을 붙이며 기존 파일을 덮어쓰지 않습니다.\n\n원본 이름에 환자명·ID가 있으면 해제 시 결과 파일명에도 남습니다. TIFF 내부 메타데이터 제거는 그대로 적용합니다. CSV의 원본 파일명 포함 옵션과는 별개입니다.", 3, 1)
         self.options_hint.setWordWrap(True)
         options.addWidget(self.options_hint, 4, 0, 1, 2)
         layout.addWidget(self.options_box)
@@ -213,6 +216,7 @@ class Window(QMainWindow):
         images, csv = self.export_image.isChecked(), self.export_csv.isChecked()
         self.include_filename.setEnabled(csv)
         self.preserve_mpp.setEnabled(images)
+        self.rename_output.setEnabled(images)
         self.compression.setEnabled(images)
         self.structure.setEnabled(images)
         self.copy_button.setEnabled(self.process is None and (images or csv))
@@ -221,6 +225,7 @@ class Window(QMainWindow):
 
     def export_options(self):
         return {"export_image": self.export_image.isChecked(), "export_csv": self.export_csv.isChecked(),
+                "rename_output": self.rename_output.isChecked(),
                 "include_filename": self.include_filename.isChecked(), "preserve_mpp": self.preserve_mpp.isChecked(),
                 "compression": self.compression.currentData(), "pyramid": self.structure.currentData()}
 

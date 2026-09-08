@@ -1,4 +1,14 @@
-WSI Anonymization 1.1.1 — Windows x64
+WSI Anonymization 1.2.0 — Windows x64
+
+출력 파일명을 익명 이름으로 변경: 기본 체크. 해제하면 원본 이름 + .tiff로 저장합니다.
+같은 이름이 있으면 _2, _3 등을 붙이고 기존 파일은 덮어쓰지 않습니다.
+원본 이름에 개인정보가 있으면 해제 시 결과 파일명에도 남습니다.
+CSV 원본 파일명 포함 옵션과는 독립적이며 i 버튼에서 설명을 볼 수 있습니다.
+새 출력은 Aperio 호환 TIFF이며 openslide.objective-power로 배율을 직접 읽습니다.
+원본에 배율이 없으면 키를 생략합니다. 이전 출력 파일은 재변환해야 합니다.
+OpenSlide vendor=aperio는 출력 호환 형식이며 원본 스캐너를 나타내지 않습니다.
+X/Y MPP가 같은 경우 OpenSlide MPP 키도 제공합니다. 다른 경우 두 키를 생략하고
+정확한 X/Y를 TIFF 표준 해상도 태그, 기술 JSON 및 CSV에 유지합니다.
 
 원본의 대물렌즈 배율은 숫자만 TIFF ImageDescription에 새로 기록합니다.
 Pixel Size는 전체 영상 픽셀 수, Physical Size는 픽셀 수 × MPP / 1000(mm)입니다.

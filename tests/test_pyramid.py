@@ -38,9 +38,12 @@ class PyramidTests(unittest.TestCase):
             result = anonymize_wsi(self.source, self.root / compression, compression=compression)
             self.assertEqual(result["objective_power"], 40)
             path = Path(result["output_path"])
+            with openslide.OpenSlide(str(path)) as slide:
+                self.assertEqual(slide.properties["openslide.objective-power"], "40")
+                self.assertEqual(slide.properties["openslide.vendor"], "aperio")
             self.assertNotIn(b"PATIENT_SENTINEL", path.read_bytes())
             with tifffile.TiffFile(path) as tif:
-                self.assertEqual(json.loads(tif.pages[0].description), result["technical_metadata"])
+                self.assertEqual(json.loads(tif.pages[0].description.split("|WSI_Technical=", 1)[1]), result["technical_metadata"])
                 self.assertEqual(result["technical_metadata"]["width_px"], 2048)
                 self.assertTrue(all(270 not in p.tags for p in tif.pages[1:]))
             again = anonymize_wsi(path, self.root / "again", export_image=False)
@@ -54,6 +57,26 @@ class PyramidTests(unittest.TestCase):
             result = anonymize_wsi(self.source, self.root / "invalid", export_image=False)
             self.assertIsNone(result["objective_power"])
 
+    def test_direct_keys_and_anisotropic_roundtrip(self):
+        for mpp in ((.25, .25), (.25, .5)):
+            path = self.root / "calibrated.tiff"
+            tifffile.imwrite(path, np.zeros((64, 128, 3), dtype=np.uint8), tile=(32, 32),
+                photometric="rgb", compression="jpeg", metadata=None,
+                resolution=(10000 / mpp[0], 10000 / mpp[1]), resolutionunit="CENTIMETER",
+                description=json.dumps({"schema": "wsi-technical-v1", "objective_power": 40}))
+            result = anonymize_wsi(path, self.root / "calibrated_out")
+            with openslide.OpenSlide(result["output_path"]) as slide:
+                self.assertEqual(slide.properties["openslide.objective-power"], "40")
+                if mpp[0] == mpp[1]:
+                    self.assertEqual(float(slide.properties["openslide.mpp-x"]), mpp[0])
+                    self.assertEqual(float(slide.properties["openslide.mpp-y"]), mpp[1])
+                else:
+                    self.assertNotIn("openslide.mpp-x", slide.properties)
+                    self.assertNotIn("openslide.mpp-y", slide.properties)
+            again = anonymize_wsi(result["output_path"], self.root / "readback", export_image=False)
+            self.assertEqual(again["mpp"], list(mpp))
+            self.assertEqual(again["objective_power"], 40)
+
     def test_physical_size_and_mpp_opt_out(self):
         from wsi_anonymizer import _technical_metadata
         self.assertEqual(_technical_metadata((2000, 1000), (.25, .5), 40)["physical_width_mm"], .5)
@@ -62,10 +85,13 @@ class PyramidTests(unittest.TestCase):
             for enabled in (True, False):
                 result = anonymize_wsi(self.source, self.root / "physical", preserve_mpp=enabled)
                 with tifffile.TiffFile(result["output_path"]) as tif:
-                    data = json.loads(tif.pages[0].description)
+                    data = json.loads(tif.pages[0].description.split("|WSI_Technical=", 1)[1])
                     self.assertEqual(data["physical_width_mm"], .512 if enabled else None)
                     self.assertEqual(data["physical_height_mm"], .512 if enabled else None)
                     self.assertEqual(data["mpp_x_um"], .25 if enabled else None)
+                with openslide.OpenSlide(result["output_path"]) as slide:
+                    self.assertIsNone(slide.properties.get("openslide.mpp-x"))
+                    self.assertIsNone(slide.properties.get("openslide.mpp-y"))
                 with open(result["csv_path"], encoding="utf-8-sig", newline="") as stream:
                     row = list(csv.DictReader(stream))[-1]
                     self.assertEqual(float(row["physical_width_mm"]), .512)
