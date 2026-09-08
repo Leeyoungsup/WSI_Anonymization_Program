@@ -9,14 +9,16 @@ from datetime import datetime
 from pathlib import Path
 
 import PySide6
-from PySide6.QtCore import QCoreApplication, QProcess, Qt, QUrl
+from PySide6.QtCore import QCoreApplication, QProcess, Qt, QUrl, QStandardPaths, QTimer
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QTextEdit, QLineEdit, QProgressBar, QMessageBox,
     QAbstractItemView, QCheckBox, QGroupBox, QGridLayout, QComboBox, QToolButton)
 
-ROOT = Path(__file__).resolve().parent.parent
+FROZEN = getattr(sys, "frozen", False)
+ROOT = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
+STATE_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "WSI_Anonymization" if FROZEN else ROOT / "artifacts"
 EXTENSIONS = {".svs", ".ndpi", ".tif", ".tiff", ".mrxs", ".scn", ".vms", ".vmu", ".bif", ".svslide", ".dcm", ".czi"}
 
 
@@ -31,7 +33,7 @@ def configure_qt():
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WSI Anonymization · Single TIFF + CSV")
+        self.setWindowTitle("WSI Anonymization 1.0.0 · Single TIFF + CSV")
         self.resize(1240, 980)
         self.setMinimumSize(1050, 850)
         self.paths, self.results, self.previews = [], {}, {}
@@ -41,6 +43,9 @@ class Window(QMainWindow):
         self.had_result = False
         self.stop_requested = False
         self.active_row = None
+        self.event_timer = QTimer(self)
+        self.event_timer.setInterval(100)
+        self.event_timer.timeout.connect(self.read_output)
         self.setAcceptDrops(True)
         container = QWidget()
         self.setCentralWidget(container)
@@ -67,6 +72,8 @@ class Window(QMainWindow):
         self.add_button.clicked.connect(self.pick_files)
         self.folder_button.clicked.connect(self.pick_folder)
         self.sample_button.clicked.connect(lambda: self.add_folder(ROOT / "data"))
+        if FROZEN and not (ROOT / "data").is_dir():
+            self.sample_button.hide()
         self.clear_button.clicked.connect(self.clear)
         splitter = QSplitter()
         self.table = QTableWidget(0, 4)
@@ -137,7 +144,8 @@ class Window(QMainWindow):
         layout.addWidget(self.options_box)
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("출력 폴더"))
-        self.output = QLineEdit(str(ROOT / "output"))
+        default_output = Path(QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)) / "WSI Exports" if FROZEN else ROOT / "output"
+        self.output = QLineEdit(str(default_output))
         output_row.addWidget(self.output)
         self.output_button = QPushButton("변경")
         self.output_button.clicked.connect(self.pick_output)
@@ -297,25 +305,35 @@ class Window(QMainWindow):
         self.active_row = row
         self.had_result = False
         self.buffer = b""
-        self.cancel_file = ROOT / "artifacts" / "cancel" / (uuid.uuid4().hex + ".cancel")
+        self.cancel_file = STATE_ROOT / "cancel" / (uuid.uuid4().hex + ".cancel")
+        if FROZEN:
+            self.cancel_file.parent.mkdir(parents=True, exist_ok=True)
+            self.job_file = self.cancel_file.with_suffix(".job.json")
+            self.events_file = self.cancel_file.with_suffix(".events.jsonl")
+            self.event_offset = 0
         self.table.item(row, 3).setText("처리 중")
         self.process = QProcess(self)
-        self.process.setProgram(str(Path(sys.executable).with_name("python.exe"))
-                                if sys.platform == "win32" else sys.executable)
-        self.process.setArguments([str(ROOT / "app.py"), "--worker"])
+        self.process.setProgram(sys.executable if FROZEN else
+                                (str(Path(sys.executable).with_name("python.exe")) if sys.platform == "win32" else sys.executable))
+        self.process.setArguments(["--worker", "--job-file", str(self.job_file), "--events-file", str(self.events_file)]
+                                  if FROZEN else [str(ROOT / "app.py"), "--worker"])
         self.process.setWorkingDirectory(str(ROOT))
         self.process.readyReadStandardOutput.connect(self.read_output)
         self.process.readyReadStandardError.connect(lambda: self.process.readAllStandardError())
         self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(self.process_error)
-        self.process.start()
         job = {"source": str(self.paths[row]), "action": self.action,
                "output": self.output.text(), "pixels_reviewed": self.reviewed.isChecked(),
                "run_id": self.run_id,
                "cancel_file": str(self.cancel_file)}
         job.update(self.export_options())
-        self.process.write((json.dumps(job) + "\n").encode("utf-8"))
-        self.process.closeWriteChannel()
+        if FROZEN:
+            self.job_file.write_text(json.dumps(job) + "\n", encoding="utf-8")
+            self.event_timer.start()
+        self.process.start()
+        if not FROZEN:
+            self.process.write((json.dumps(job) + "\n").encode("utf-8"))
+            self.process.closeWriteChannel()
 
     def process_error(self, error):
         if error == QProcess.FailedToStart:
@@ -323,7 +341,17 @@ class Window(QMainWindow):
             self.finished(1, QProcess.NormalExit)
 
     def read_output(self):
-        self.buffer += bytes(self.process.readAllStandardOutput())
+        if self.process is None:
+            return
+        if FROZEN:
+            if not self.events_file.exists():
+                return
+            with self.events_file.open("rb") as stream:
+                stream.seek(self.event_offset)
+                self.buffer += stream.read()
+                self.event_offset = stream.tell()
+        else:
+            self.buffer += bytes(self.process.readAllStandardOutput())
         while b"\n" in self.buffer:
             line, self.buffer = self.buffer.split(b"\n", 1)
             try:
@@ -368,12 +396,16 @@ class Window(QMainWindow):
             self.show_selection()
 
     def finished(self, code, exit_status):
+        self.event_timer.stop()
         self.read_output()
         if not self.had_result:
             self.handle({"kind": "error", "message": f"작업 프로세스가 종료되었습니다. (코드 {code})"})
         self.completed += 1
         self.progress.setValue(int(1000 * self.completed / len(self.paths)))
         self.cancel_file.unlink(missing_ok=True)
+        if FROZEN:
+            self.job_file.unlink(missing_ok=True)
+            self.events_file.unlink(missing_ok=True)
         old = self.process
         self.process = None
         old.deleteLater()

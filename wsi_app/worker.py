@@ -44,6 +44,9 @@ def main():
                         thumbnail.close()
             emit("result", action="inspect", data=result, preview=preview)
         return 0
+    except ImportError as exc:
+        emit("error", message="필수 라이브러리를 불러오지 못했습니다: " + str(exc), error_type=type(exc).__name__)
+        return 1
     except ExportCancelled:
         emit("cancelled", message="TIFF 내보내기를 중지했습니다. 미완성 파일은 정리했습니다.")
         return 0

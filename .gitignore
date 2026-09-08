@@ -3,3 +3,6 @@ artifacts/
 __pycache__/
 *.pyc
 output/
+build/
+dist/
+release/
