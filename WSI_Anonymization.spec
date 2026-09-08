@@ -5,7 +5,7 @@ import PySide6
 import sys
 
 packages = ["openslide-python", "openslide-bin", "numpy", "Pillow", "tifffile", "imagecodecs", "PySide6", "shiboken6", "PySide6_Essentials"]
-datas = []
+datas = [("logo/logo.png", "logo"), ("logo/icon.png", "logo")]
 for package in packages:
     datas += copy_metadata(package)
 ffi = Path(sys.prefix) / "Library" / "bin" / "ffi.dll"
@@ -36,4 +36,4 @@ a.binaries = corrected
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name="WSI_Anonymization",
           debug=False, bootloader_ignore_signals=False, strip=False, upx=False,
-          console=False, disable_windowed_traceback=False)
+          console=False, disable_windowed_traceback=False, icon="logo/icon.png")

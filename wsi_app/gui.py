@@ -10,14 +10,15 @@ from pathlib import Path
 
 import PySide6
 from PySide6.QtCore import QCoreApplication, QProcess, Qt, QUrl, QStandardPaths, QTimer
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QDesktopServices, QPixmap, QIcon
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QPushButton, QFileDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QTextEdit, QLineEdit, QProgressBar, QMessageBox,
-    QAbstractItemView, QCheckBox, QGroupBox, QGridLayout, QComboBox, QToolButton)
+    QAbstractItemView, QCheckBox, QGroupBox, QGridLayout, QComboBox, QToolButton, QTabWidget, QScrollArea)
 
 FROZEN = getattr(sys, "frozen", False)
 ROOT = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
+ASSET_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) / "logo"
 STATE_ROOT = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "WSI_Anonymization" if FROZEN else ROOT / "artifacts"
 EXTENSIONS = {".svs", ".ndpi", ".tif", ".tiff", ".mrxs", ".scn", ".vms", ".vmu", ".bif", ".svslide", ".dcm", ".czi"}
 
@@ -43,9 +44,10 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WSI Anonymization 1.3.0 · Pyramidal TIFF + CSV")
-        self.resize(1240, 980)
-        self.setMinimumSize(1050, 850)
+        self.setWindowTitle("MeDIAuto Anonymization · 1.4.0")
+        self.setWindowIcon(QIcon(str(ASSET_ROOT / "icon.png")))
+        self.resize(1240, 900)
+        self.setMinimumSize(1050, 760)
         self.paths, self.results, self.previews = [], {}, {}
         self.queue = []
         self.process = None
@@ -60,24 +62,33 @@ class Window(QMainWindow):
         container = QWidget()
         self.setCentralWidget(container)
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(16)
-        title = QLabel("WSI Anonymization")
-        title.setObjectName("title")
-        layout.addWidget(title)
-        layout.addWidget(QLabel("WSI Export  |  내보낼 항목을 선택하고 날짜·시간 폴더에 저장합니다."))
+        layout.setContentsMargins(24, 18, 24, 18)
+        layout.setSpacing(12)
+        header = QHBoxLayout()
+        self.brand = QLabel()
+        logo = QPixmap(str(ASSET_ROOT / "logo.png"))
+        self.brand.setPixmap(logo.scaled(270, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.brand.setAccessibleName("MeDIAuto Anonymization")
+        header.addWidget(self.brand)
+        header.addStretch()
+        subtitle = QLabel("WSI 익명화 및 내보내기\nSVS · NDPI → TIFF + CSV")
+        subtitle.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        subtitle.setObjectName("subtitle")
+        header.addWidget(subtitle)
+        layout.addLayout(header)
         notice = QLabel("원본 메타데이터·라벨·매크로는 내보내지 않습니다. 조직 영상 안에 적힌 개인정보는 별도 검토가 필요합니다.")
         notice.setObjectName("notice")
         notice.setWordWrap(True)
         layout.addWidget(notice)
         toolbar = QHBoxLayout()
+        toolbar.addWidget(QLabel("슬라이드 목록"))
+        toolbar.addStretch()
         self.add_button = QPushButton("파일 추가")
         self.folder_button = QPushButton("폴더 추가")
         self.sample_button = QPushButton("샘플 불러오기")
         self.clear_button = QPushButton("목록 비우기")
         for button in (self.add_button, self.folder_button, self.sample_button, self.clear_button):
             toolbar.addWidget(button)
-        toolbar.addStretch()
         layout.addLayout(toolbar)
         self.add_button.clicked.connect(self.pick_files)
         self.folder_button.clicked.connect(self.pick_folder)
@@ -96,11 +107,20 @@ class Window(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(42)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.empty_state = QLabel("슬라이드를 추가하세요\n\n파일 또는 폴더를 이곳에 끌어다 놓으세요.", self.table.viewport())
+        self.empty_state.setAlignment(Qt.AlignCenter)
+        self.empty_state.setObjectName("emptyState")
+        self.empty_state.setAttribute(Qt.WA_TransparentForMouseEvents)
+        empty_layout = QVBoxLayout(self.table.viewport())
+        empty_layout.addWidget(self.empty_state)
         self.table.itemSelectionChanged.connect(self.show_selection)
         splitter.addWidget(self.table)
         panel = QWidget()
         panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(16, 0, 0, 0)
+        panel_layout.setContentsMargins(14, 14, 14, 14)
         panel_layout.addWidget(QLabel("선택한 슬라이드"))
         self.preview = QLabel("검사하면 조직 썸네일이 표시됩니다.")
         self.preview.setAlignment(Qt.AlignCenter)
@@ -111,16 +131,24 @@ class Window(QMainWindow):
         self.details.setReadOnly(True)
         self.details.setPlaceholderText("파일을 추가하고 '전체 검사'를 누르세요.\n파일과 폴더를 창에 끌어다 놓을 수도 있습니다.")
         panel_layout.addWidget(self.details)
-        splitter.addWidget(panel)
-        splitter.setSizes([710, 430])
+        self.side_tabs = QTabWidget()
+        self.side_tabs.setMinimumWidth(440)
+        splitter.addWidget(self.side_tabs)
+        splitter.setSizes([660, 530])
+        splitter.setChildrenCollapsible(False)
         layout.addWidget(splitter, 1)
-        self.options_box = QGroupBox("내보내기 옵션")
+        self.options_box = QGroupBox()
         options = QGridLayout(self.options_box)
-        options.setHorizontalSpacing(32)
+        options.setContentsMargins(18, 10, 18, 14)
+        options.setVerticalSpacing(14)
         self.info_buttons = {}
 
         def option(widget, key, title, explanation, row, column):
+            order = {"image": 0, "csv": 1, "structure": 2, "compression": 3,
+                     "rename": 4, "filename": 5, "mpp": 6, "icc": 7, "privacy": 8}
             line = QHBoxLayout()
+            if key in ("structure", "compression"):
+                line.addWidget(QLabel(title))
             line.addWidget(widget)
             info = QToolButton()
             info.setText("i")
@@ -131,7 +159,7 @@ class Window(QMainWindow):
             self.info_buttons[key] = info
             line.addWidget(info)
             line.addStretch()
-            options.addLayout(line, row, column)
+            options.addLayout(line, order[key], 0)
 
         self.export_image = QCheckBox("TIFF 영상")
         self.export_csv = QCheckBox("슬라이드 정보 CSV")
@@ -159,8 +187,14 @@ class Window(QMainWindow):
         option(self.rename_output, "rename", "출력 파일명 변경", "체크: anonymous_<임의 ID>.tiff로 저장합니다.\n해제: 원본 이름을 유지하고 확장자만 .tiff로 바꿉니다. 같은 이름이 있으면 _2, _3 등을 붙이며 기존 파일을 덮어쓰지 않습니다.\n\n원본 이름에 환자명·ID가 있으면 해제 시 결과 파일명에도 남습니다. TIFF 내부 메타데이터 제거는 그대로 적용합니다. CSV의 원본 파일명 포함 옵션과는 별개입니다.", 3, 1)
         self.options_hint.setWordWrap(True)
         option(self.preserve_icc, "icc", "ICC 색상 프로파일", "체크하면 원본 조직 영상의 ICC를 TIFF 기본 페이지에 그대로 저장합니다. 색상 변환이나 영상 재압축을 하지 않으며 OpenSlide color_profile로 읽을 수 있습니다.\n\nICC 내부 설명·제조사 정보 등도 그대로 복사되므로 개인정보가 없는지 별도 검토가 필요합니다. 결과는 ICC 검토 필요로 표시합니다. 원본에 ICC가 없으면 추가하지 않습니다. 기본값은 제외입니다.", 4, 0)
-        options.addWidget(self.options_hint, 5, 0, 1, 2)
-        layout.addWidget(self.options_box)
+        self.options_hint.setObjectName("hint")
+        options.addWidget(self.options_hint, 9, 0)
+        options.setRowStretch(10, 1)
+        settings_scroll = QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setWidget(self.options_box)
+        self.side_tabs.addTab(settings_scroll, "내보내기 설정")
+        self.side_tabs.addTab(panel, "슬라이드 정보")
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("출력 폴더"))
         default_output = Path(QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)) / "WSI Exports" if FROZEN else ROOT / "output"
@@ -198,8 +232,8 @@ class Window(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel)
         actions.addWidget(self.inspect_button)
-        actions.addWidget(self.copy_button)
         actions.addStretch()
+        actions.addWidget(self.copy_button)
         actions.addWidget(self.cancel_button)
         layout.addLayout(actions)
         self.progress = QProgressBar()
@@ -266,6 +300,7 @@ class Window(QMainWindow):
             for column, value in enumerate((path.name, path.suffix[1:].upper(), f"{size / 1e9:.2f} GB", "대기")):
                 self.table.setItem(row, column, QTableWidgetItem(value))
         self.status.setText(f"{len(self.paths)}개 파일 · 전체 검사를 시작할 수 있습니다.")
+        self.empty_state.setVisible(not self.paths)
         if self.paths and self.table.currentRow() < 0:
             self.table.selectRow(0)
 
@@ -274,6 +309,7 @@ class Window(QMainWindow):
         self.results.clear()
         self.previews.clear()
         self.table.setRowCount(0)
+        self.empty_state.show()
         self.preview.clear()
         self.details.clear()
         self.reviewed.setChecked(False)
@@ -302,6 +338,7 @@ class Window(QMainWindow):
             self.status.setText("출력 폴더를 선택하세요.")
             return
         self.action = action
+        self.side_tabs.setCurrentIndex(1)
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f") if action == "copy" else None
         self.queue = list(range(len(self.paths)))
         self.stop_requested = False
@@ -521,31 +558,51 @@ class Window(QMainWindow):
 
 
 STYLE = """
-QWidget { background: #f3f6fa; color: #1d2c42; font-family: 'Malgun Gothic'; font-size: 13px; }
-QLabel#title { font-size: 30px; font-weight: bold; color: #12354a; }
-QLabel#notice { background: #fff4db; color: #715215; padding: 12px; border-radius: 8px; }
-QPushButton { background: white; border: 1px solid #ced8e3; border-radius: 6px; padding: 10px 16px; }
-QPushButton:hover { background: #e5eff5; }
-QPushButton:disabled { color: #93a0ad; background: #edf0f3; }
-QPushButton#primary { background: #087e83; color: white; border: none; }
-QPushButton#primary:disabled { background: #91b8ba; }
-QGroupBox { border: 1px solid #ced8e3; border-radius: 8px; margin-top: 12px; padding: 14px 10px 6px; }
-QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; font-weight: bold; }
-QToolButton#info { background: #e0f0f0; color: #087e83; border: 1px solid #9ac6c7; border-radius: 10px; min-width: 20px; max-width: 20px; min-height: 20px; max-height: 20px; font-weight: bold; }
-QComboBox { background: white; padding: 5px; border: 1px solid #ced8e3; border-radius: 4px; }
-QTableWidget, QTextEdit, QLineEdit { background: white; border: 1px solid #dce3ec; border-radius: 6px; padding: 6px; }
-QHeaderView::section { background: #e7edf4; padding: 10px; border: none; font-weight: bold; }
-QTableWidget::item { padding: 4px; }
-QTableWidget::item:selected { background: #d8eeef; color: #12354a; }
-QLabel#preview { background: white; border: 1px solid #dce3ec; border-radius: 8px; }
-QProgressBar { border: none; background: #e1e7ee; border-radius: 5px; height: 18px; text-align: center; }
-QProgressBar::chunk { background: #28aaa1; border-radius: 5px; }
+QWidget { background: #f5f6fb; color: #26314a; font-family: 'Malgun Gothic'; font-size: 13px; }
+QLabel { background: transparent; }
+QLabel#subtitle { color: #6a748a; font-size: 12px; }
+QLabel#notice { background: #edf0ff; color: #576083; padding: 10px 14px; border-radius: 8px; font-size: 12px; }
+QLabel#hint, QLabel#emptyState { color: #8a93a6; font-size: 12px; }
+QPushButton { background: white; border: 1px solid #dce0ec; border-radius: 7px; padding: 9px 16px; font-weight: 500; }
+QPushButton:hover { border-color: #8c81ed; background: #f3f0ff; }
+QPushButton:pressed { background: #e9e4ff; }
+QPushButton:disabled { color: #a1a7b6; background: #eef0f5; }
+QPushButton#primary { background: #6250db; color: white; border: 1px solid #6250db; font-weight: bold; }
+QPushButton#primary:hover { background: #5040be; }
+QPushButton#primary:disabled { background: #b8b0e3; border-color: #b8b0e3; }
+QGroupBox { background: white; border: none; margin-top: 0; padding-top: 4px; }
+QGroupBox::title { subcontrol-origin: margin; left: 18px; padding: 0 4px; color: #586582; font-weight: bold; }
+QGroupBox QCheckBox, QGroupBox QToolButton { background: white; }
+QCheckBox { spacing: 9px; padding: 3px 0; }
+QCheckBox:disabled { color: #a1a7b6; }
+QToolButton#info { color: #7a74a0; border: 1px solid #dce0ec; border-radius: 9px; min-width: 18px; max-width: 18px; min-height: 18px; max-height: 18px; font-size: 11px; font-weight: bold; }
+QToolButton#info:hover { background: #eeeaff; color: #6250db; }
+QComboBox { background: white; padding: 8px 10px; border: 1px solid #dce0ec; border-radius: 5px; min-width: 230px; }
+QTableWidget, QTextEdit, QLineEdit { background: white; border: 1px solid #e0e4ef; border-radius: 8px; padding: 8px; selection-background-color: #eeeaff; selection-color: #3c3279; }
+QTableWidget { alternate-background-color: #fafbfe; }
+QHeaderView::section { background: #eef0f7; color: #64708a; padding: 12px 8px; border: none; font-weight: bold; font-size: 12px; }
+QTableWidget::item { padding: 6px; border-bottom: 1px solid #f0f2f7; }
+QTableWidget::item:selected { background: #eeebff; color: #3c3279; }
+QTableWidget::item:focus { outline: none; }
+QLabel#preview { background: white; border: 1px solid #e0e4ef; border-radius: 8px; color: #8a93a6; }
+QTabWidget::pane { background: white; border: 1px solid #e0e4ef; border-radius: 8px; }
+QTabBar::tab { background: transparent; padding: 12px 24px; color: #858da0; border-bottom: 2px solid transparent; }
+QTabBar::tab:selected { color: #6250db; border-bottom: 2px solid #6250db; font-weight: bold; }
+QScrollArea { background: white; border: none; }
+QSplitter::handle { background: transparent; width: 14px; }
+QProgressBar { border: none; background: #e7e9f2; border-radius: 4px; min-height: 8px; max-height: 8px; color: transparent; }
+QProgressBar::chunk { background: #8070e8; border-radius: 4px; }
+QScrollBar:vertical { background: #f4f5fa; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: #ced3e2; border-radius: 5px; min-height: 30px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """
 
 
 def main():
     configure_qt()
     app = QApplication(sys.argv)
+    app.setApplicationName("MeDIAuto Anonymization")
+    app.setWindowIcon(QIcon(str(ASSET_ROOT / "icon.png")))
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)
     window = Window()

@@ -1,4 +1,8 @@
-WSI Anonymization 1.3.0 — Windows x64
+MeDIAuto Anonymization 1.4.0 — Windows x64
+
+MeDIAuto 로고와 아이콘 적용, 파일 목록/내보내기 설정/슬라이드 정보 화면을 정리했습니다.
+오른쪽 탭에서 설정과 정보를 전환합니다. 검사·내보내기를 시작하면 정보 탭으로 이동합니다.
+작은 창에서는 설정 영역을 스크롤할 수 있습니다. 로고와 아이콘은 EXE에 포함됩니다.
 
 원본 Vendor를 정보 화면·TIFF 기술 정보·CSV에 표시합니다.
 출력 openslide.vendor=aperio와 원본 Vendor(예: hamamatsu)는 구분합니다.

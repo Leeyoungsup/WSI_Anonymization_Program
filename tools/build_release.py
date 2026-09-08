@@ -11,7 +11,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 NAME = "WSI_Anonymization-" + VERSION + "-Windows-x64"
 
 
@@ -71,6 +71,7 @@ def main():
     source_files += sorted((ROOT / "wsi_app").glob("*.py"))
     source_files += [ROOT / "tools" / name for name in ("inspect_samples.py", "check_openslide.py", "build_release.py")]
     source_files += [ROOT / "docs" / "release_readme.txt"]
+    source_files += [ROOT / "logo" / name for name in ("logo.png", "icon.png")]
     with zipfile.ZipFile(folder / "source-build.zip", "w", zipfile.ZIP_DEFLATED) as archive:
         for source in source_files:
             archive.write(source, source.relative_to(ROOT))

@@ -1,6 +1,6 @@
-# Windows EXE 1.3.0 검증
+# Windows EXE 1.4.0 검증
 
-배포 ZIP: `release/WSI_Anonymization-1.3.0-Windows-x64.zip`.
+배포 ZIP: `release/WSI_Anonymization-1.4.0-Windows-x64.zip`.
 
 1.2.0은 Aperio 호환 설명으로 저장하여 별도의 OpenSlide 수정 없이 `openslide.objective-power`를 직접 제공합니다. 배율 숫자와 고정 호환 표기, 기술 JSON만 생성하며 원본 설명은 복사하지 않습니다. 합성 피라미드 테스트 7개에서 직접 배율 키, 등방성 MPP 키, 비등방성 MPP의 정확한 기술 정보 재읽기, 개인정보 표식 제거, 원본 압축·픽셀 보존, 마스크·취소를 검증했습니다. 비등방성 MPP는 OpenSlide 키를 생략하고 TIFF 표준 해상도 및 기술 JSON·CSV에 유지합니다. 1.1.2의 None 관찰 기록은 이전 출력에 해당합니다.
 
@@ -11,6 +11,12 @@
 기본 구조를 표준 피라미드 TIFF로 변경했습니다. 최대 해상도와 호환 원본 조직 축소 레벨의 JPEG 압축을 유지하고 필요한 작은 레벨만 추가 생성합니다. GUI에서 단일 해상도 TIFF도 선택할 수 있습니다. 모든 레벨에 개인정보 메타데이터 제거를 적용하며 영상에 직접 적힌 식별자는 사용자 검토 대상입니다.
 
 ## 검증
+
+1.4.0은 UI·브랜딩 변경입니다. 원본 로고·아이콘 PNG를 수정하지 않고 창과 EXE에 포함합니다. 설정·정보 탭, 작은 창의 설정 스크롤, 파일 목록, 옵션/설명 버튼, 기존 내보내기 연결을 검증했습니다. 화면 검증은 사용자 데스크톱 입력 없이 offscreen Qt 렌더링으로 수행했습니다. 변환 엔진은 1.3.0과 같으므로 대용량 재변환은 반복하지 않았습니다.
+
+최종 EXE의 내장 logo/logo.png 및 logo/icon.png 바이트를 원본과 비교했고 Windows 아이콘 리소스도 확인했습니다. 실제 SVS·NDPI의 검사·썸네일 화면, 1240×900 및 1050×760 화면 배치를 확인했습니다. 최종 EXE 작업 테스트와 frozen GUI 연결도 통과했습니다. source-build.zip에는 두 원본 이미지가 포함됩니다.
+
+실제 SVS·NDPI도 preserve_icc=True로 재변환했습니다. SVS의 원본 Vendor=aperio, ICC 13,113,264바이트가 TIFF 원본 태그와 일치했습니다. NDPI의 원본 Vendor=hamamatsu, ICC 없음도 확인했습니다. 두 결과 모두 OpenSlide 배율 40, 썸네일, 전체 타일 검증 및 원본 SHA-256 보존을 통과했습니다. 기록은 `artifacts/icc_vendor_validation.json`입니다. 최종 1.3.0 EXE에서 원본 ICC 바이트를 OpenSlide로 다시 읽는 테스트와 GUI 연결도 통과했습니다.
 
 1.3.0: 원본 Vendor 재변환 보존과 임의 문자열 거부, JPEG/Deflate 각각의 ICC 포함·제외, 원본 프로파일 바이트와 OpenSlide 썸네일 ICC 일치, 원본 ICC가 없는 경우, ICC 별도 검토 상태·CSV를 테스트했습니다. 기존 standalone 11개, 압축 유지 6개, 피라미드 7개와 ICC 전용 2개가 검증 범위입니다. 원본 포함 ICC는 개인정보 제거 완료로 판정하지 않습니다.
 
