@@ -15,7 +15,7 @@ import tifffile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from wsi_anonymizer import anonymize_wsi as export_wsi, ExportCancelled
 from functools import partial
-anonymize_wsi = partial(export_wsi, compression="lossless")
+anonymize_wsi = partial(export_wsi, compression="lossless", pyramid=False)
 
 
 class StandaloneTests(unittest.TestCase):
@@ -85,7 +85,7 @@ class StandaloneTests(unittest.TestCase):
         module = self.root / "wsi_anonymizer.py"
         shutil.copyfile(Path(__file__).resolve().parents[1] / module.name, module)
         target = self.root / "portable"
-        completed = subprocess.run([sys.executable, "-I", str(module), str(self.source), str(target), "--compression", "lossless"],
+        completed = subprocess.run([sys.executable, "-I", str(module), str(self.source), str(target), "--compression", "lossless", "--single-image"],
                                    cwd=self.root, capture_output=True, text=True, timeout=60)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(len(list(target.rglob("*.tiff"))), 1)

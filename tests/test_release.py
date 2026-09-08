@@ -20,8 +20,11 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     folder = Path(temporary)
     source = folder / "input" / "synthetic.tiff"
     source.parent.mkdir()
-    tifffile.imwrite(source, np.random.default_rng(8).integers(0, 256, (256, 512, 3), dtype=np.uint8),
-                     compression="jpeg", tile=(128, 128), photometric="rgb", description="PATIENT_SENTINEL")
+    pixels = np.random.default_rng(8).integers(0, 256, (1024, 2048, 3), dtype=np.uint8)
+    with tifffile.TiffWriter(source) as writer:
+        for index, array in enumerate((pixels, pixels[::2, ::2])):
+            writer.write(array, compression="jpeg", tile=(128,128), photometric="rgb",
+                         subfiletype=index, description="PATIENT_SENTINEL")
     original = hashlib.sha256(source.read_bytes()).digest()
 
     def run(action="copy", **options):
@@ -41,6 +44,9 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     assert run("inspect")["data"]["errors"] == []
     preserved = run()["data"]
     assert preserved["report"]["compression"] == "jpeg-preserved"
+    assert preserved["report"]["preserved_levels"] == 2
+    assert preserved["report"]["generated_levels"] == 1
+    assert preserved["report"]["thumbnail_verified"] is True
     assert b"PATIENT_SENTINEL" not in Path(preserved["file"]).read_bytes()
     np.testing.assert_array_equal(tifffile.imread(source), tifffile.imread(preserved["file"]))
     lossless = run(compression="lossless", export_csv=False)["data"]

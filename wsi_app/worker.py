@@ -23,12 +23,12 @@ def main():
         path = Path(job["source"])
         if job["action"] == "copy":
             def progress(event):
-                stage = "TIFF 저장" if event["stage"] == "write" else "전체 타일 검증"
+                stage = {"write": "TIFF 저장", "verify": "전체 타일 검증", "pyramid": "피라미드 구성·검증", "finalize": "최종 확인"}[event["stage"]]
                 emit("progress", message=f"{stage} · {event['percent']}%", percent=event["percent"])
             result = create_anonymized_tiff(
                 path, Path(job["output"]), run_id=job.get("run_id"), pixels_reviewed=job.get("pixels_reviewed", False),
                 progress=progress, cancelled=lambda: Path(job["cancel_file"]).exists(),
-                **{key: job[key] for key in ("export_image", "export_csv", "include_filename", "preserve_mpp", "compression") if key in job})
+                **{key: job[key] for key in ("export_image", "export_csv", "include_filename", "preserve_mpp", "compression", "pyramid") if key in job})
             emit("result", action="copy", data=result)
         else:
             emit("progress", message="구조 검사 및 영상 읽기")

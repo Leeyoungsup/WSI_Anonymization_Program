@@ -33,7 +33,7 @@ def configure_qt():
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WSI Anonymization 1.0.0 · Single TIFF + CSV")
+        self.setWindowTitle("WSI Anonymization 1.1.0 · Pyramidal TIFF + CSV")
         self.resize(1240, 980)
         self.setMinimumSize(1050, 850)
         self.paths, self.results, self.previews = [], {}, {}
@@ -129,18 +129,22 @@ class Window(QMainWindow):
         self.preserve_mpp = QCheckBox("TIFF에 MPP 보존")
         for control in (self.export_image, self.export_csv, self.include_filename, self.preserve_mpp):
             control.setChecked(True)
-        option(self.export_image, "image", "TIFF 영상", "최대 해상도 영상 한 장을 익명 파일명의 TIFF로 저장합니다. 축소 피라미드, 라벨, 매크로는 포함하지 않습니다.\n\n해제하면 TIFF 파일을 만들지 않고 선택한 CSV만 저장합니다.", 0, 0)
+        option(self.export_image, "image", "TIFF 영상", "조직 영상을 익명 파일명의 TIFF로 저장합니다. 기본값은 표준 피라미드 TIFF이며 라벨과 매크로는 포함하지 않습니다.\n\n해제하면 TIFF 파일을 만들지 않고 선택한 CSV만 저장합니다.", 0, 0)
         option(self.export_csv, "csv", "슬라이드 정보 CSV", "MPP(픽셀의 실제 크기), 영상 크기, 배율, 입력 형식, 파일 크기와 처리 결과를 CSV에 기록합니다. 환자명·검체 ID·스캔 날짜 등 원본 개인정보 태그는 포함하지 않습니다.\n\nCSV만 선택하면 영상을 변환하거나 픽셀 검증하지 않습니다.", 0, 1)
         option(self.include_filename, "filename", "원본 파일명 포함", "CSV에 원본 파일명을 기록하여 결과와 대응시킵니다. 파일명 자체에 이름이나 환자 ID가 있으면 CSV에도 남습니다.\n\n해제하면 original_filename 열을 빈칸으로 저장합니다. TIFF 내부에는 원본 파일명을 기록하지 않습니다.", 1, 1)
         option(self.preserve_mpp, "mpp", "TIFF에 MPP 보존", "MPP는 픽셀 하나의 실제 길이(µm/pixel)입니다. TIFF 해상도 정보에 기록하여 측정 도구가 실제 크기를 계산할 수 있게 합니다.\n\n해제해도 영상 픽셀 크기는 바뀌지 않습니다. CSV를 선택했다면 원본 MPP는 CSV에 기록됩니다.", 1, 0)
         self.compression = QComboBox()
         self.compression.addItem("원본 JPEG 압축 유지", "preserve")
         self.compression.addItem("무손실 Deflate로 재저장", "lossless")
-        option(self.compression, "compression", "압축 방식", "원본 JPEG 압축 유지: 재압축 없이 압축 영상 데이터를 옮깁니다. 지원하지 않는 구조는 오류로 알리며 자동 재압축하지 않습니다.\n\n무손실 Deflate: 영상을 RGB로 풀어 무손실 저장합니다. 추가 JPEG 손실은 없지만 파일 크기가 크게 늘 수 있습니다.\n\n두 방식 모두 피라미드 없는 단일 TIFF입니다.", 2, 0)
+        option(self.compression, "compression", "압축 방식", "원본 JPEG 압축 유지: 최대 해상도 영상을 재압축하지 않습니다. 호환되는 원본 축소 레벨도 재사용하고, 추가로 필요한 작은 레벨만 JPEG로 생성합니다.\n\n무손실 Deflate: RGB를 무손실 저장합니다. 파일 크기가 크게 늘 수 있습니다. 추가 축소 레벨도 Deflate로 저장합니다.", 2, 0)
         option(QLabel("개인정보 메타데이터 제거 · 항상 적용"), "privacy", "익명화 범위", "TIFF에서 원본 개인정보 태그, 라벨·매크로·썸네일, ICC와 JPEG APP/COM 부가정보를 제외합니다.\n\n조직 영상에 직접 찍힌 이름이나 식별자는 자동으로 지워지지 않습니다. 아래 검토 확인은 사용자의 확인 기록이며 자동 익명화 인증이 아닙니다.", 2, 1)
+        self.structure = QComboBox()
+        self.structure.addItem("표준 피라미드 TIFF", True)
+        self.structure.addItem("단일 해상도 TIFF", False)
+        option(self.structure, "structure", "출력 구조", "표준 피라미드 TIFF: 최대 해상도와 조직 축소 레벨을 함께 저장합니다. OpenSlide의 get_thumbnail()과 확대·축소 보기에 사용할 수 있습니다.\n\n단일 해상도 TIFF: 최대 해상도만 저장합니다. 큰 영상의 get_thumbnail()은 많은 메모리가 필요할 수 있습니다.\n\n두 구조 모두 개인정보 메타데이터 제거를 적용합니다. 영상에 직접 찍힌 식별자는 별도 검토가 필요합니다.", 3, 0)
         self.options_hint = QLabel()
         self.options_hint.setWordWrap(True)
-        options.addWidget(self.options_hint, 3, 0, 1, 2)
+        options.addWidget(self.options_hint, 4, 0, 1, 2)
         layout.addWidget(self.options_box)
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("출력 폴더"))
@@ -201,6 +205,7 @@ class Window(QMainWindow):
         self.include_filename.setEnabled(csv)
         self.preserve_mpp.setEnabled(images)
         self.compression.setEnabled(images)
+        self.structure.setEnabled(images)
         self.copy_button.setEnabled(self.process is None and (images or csv))
         self.options_hint.setText("TIFF 또는 CSV를 하나 이상 선택하세요." if not (images or csv)
                                   else "선택한 항목은 같은 날짜·시간 폴더에 저장됩니다. i 버튼에서 설명을 확인하세요.")
@@ -208,7 +213,7 @@ class Window(QMainWindow):
     def export_options(self):
         return {"export_image": self.export_image.isChecked(), "export_csv": self.export_csv.isChecked(),
                 "include_filename": self.include_filename.isChecked(), "preserve_mpp": self.preserve_mpp.isChecked(),
-                "compression": self.compression.currentData()}
+                "compression": self.compression.currentData(), "pyramid": self.structure.currentData()}
 
     def pick_files(self):
         files, _ = QFileDialog.getOpenFileNames(self, "WSI 파일 선택", str(ROOT / "data"),
@@ -435,8 +440,9 @@ class Window(QMainWindow):
                     f"기술 정보: {Path(data['csv_path']).name}"]))
                 return
             self.details.setPlainText("\n".join([
-                "형식: 최대 해상도 단일 영상 TIFF", f"영상 크기: {report['level_dimensions'][0]}",
-                "영상 수: 1장 (축소 피라미드 없음)",
+                "형식: " + ("표준 피라미드 TIFF" if report.get("pyramid") else "단일 해상도 TIFF"), f"영상 크기: {report['level_dimensions'][0]}",
+                f"영상 레벨 수: {len(report['level_dimensions'])}",
+                f"원본 압축 유지 레벨: {report.get('preserved_levels', 0)} · 추가 생성 레벨: {report.get('generated_levels', 0)}",
                 "메타데이터·부속 이미지: 원본에서 복사하지 않음",
                 "압축: " + ("원본 JPEG 유지" if report["compression"] == "jpeg-preserved" else "무손실 Deflate"),
                 f"전체 타일 검증: {report['verified_tiles']:,}개 통과",

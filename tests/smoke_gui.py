@@ -73,7 +73,7 @@ def main():
             assert Path(item["file"]).suffix == ".tiff"
             assert b"PRIVATE_SENTINEL" not in Path(item["file"]).read_bytes()
             with tifffile.TiffFile(item["file"]) as tif:
-                assert len(tif.pages) == 1 and not tif.pages[0].subifds
+                assert len(tif.pages) >= 1 and not tif.pages[0].subifds
         first_folder = window.results[0]["directory"]
         assert first_folder == window.results[1]["directory"]
         with Path(window.results[0]["csv_path"]).open(encoding="utf-8-sig", newline="") as stream:

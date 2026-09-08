@@ -1,4 +1,4 @@
-WSI Anonymization 1.0.0 — Windows x64
+WSI Anonymization 1.1.0 — Windows x64
 
 실행
 1. ZIP 압축을 해제합니다.

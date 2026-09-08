@@ -1,4 +1,4 @@
-"""Full-size single-image exports and CSV under output/<timestamp>/."""
+"""Full-size pyramid exports and CSV under output/<timestamp>/."""
 import hashlib
 import json
 from pathlib import Path
@@ -14,7 +14,7 @@ from wsi_anonymizer import anonymize_wsi
 root = Path(__file__).resolve().parents[1]
 reports = []
 run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-record_path = root / "artifacts" / "preserved_tiff_validation.json"
+record_path = root / "artifacts" / "pyramid_tiff_validation.json"
 if "--resume" in sys.argv:
     reports = json.loads(record_path.read_text(encoding="utf-8"))
     assert all(Path(report["output_path"]).is_file() for report in reports)
@@ -37,21 +37,21 @@ for source in sorted((root / "data").iterdir()):
 
     result = anonymize_wsi(source, root / "output", run_id=run_id, progress=progress)
     with tifffile.TiffFile(result["output_path"]) as tif:
-        assert len(tif.pages) == 1 and not tif.pages[0].subifds
+        assert len(tif.pages) >= 3 and all(p.is_tiled and not p.subifds for p in tif.pages)
         assert tif.pages[0].compression == 7
-    assert result["reencoded"] is False
-    assert result["size_bytes"] < source.stat().st_size
+    assert result["base_image_reencoded"] is False
+    assert result["thumbnail_verified"] is True
     with source.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").digest() == before
     result["source_extension"] = source.suffix
     result["original_sha256_unchanged"] = True
     result["elapsed_seconds"] = round(time.monotonic() - start, 1)
     reports.append(result)
-    (root / "artifacts" / "preserved_tiff_validation.json").write_text(
+    (root / "artifacts" / "pyramid_tiff_validation.json").write_text(
         json.dumps(reports, indent=2), encoding="utf-8")
     print(json.dumps(result), flush=True)
 with Path(reports[-1]["csv_path"]).open(encoding="utf-8-sig", newline="") as stream:
     rows = list(csv.DictReader(stream))
 assert len(rows) == len(reports)
-assert all(row["mpp_x_um"] and row["mpp_y_um"] and row["output_pages"] == "1" for row in rows)
+assert all(row["mpp_x_um"] and row["mpp_y_um"] and int(row["output_pages"]) >= 3 for row in rows)
 print("Shared timestamp folder and CSV rows verified", flush=True)

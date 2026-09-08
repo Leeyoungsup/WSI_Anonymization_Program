@@ -1,4 +1,4 @@
-"""Standalone WSI -> single-image TIFF and technical CSV (Python 3.10+).
+"""Standalone WSI -> pyramidal TIFF and technical CSV (Python 3.10+).
 
 Copy this file to another project. Dependencies:
     pip install openslide-python "openslide-bin>=4.0.1.2" numpy tifffile imagecodecs Pillow
@@ -11,7 +11,9 @@ and NDPI restart segments. APP/COM headers, private TIFF tags, associated images
 and unreferenced file bytes are excluded. Unsupported layouts fail explicitly;
 they are never silently re-encoded. compression='lossless' explicitly selects
 the previous decoded RGB/Deflate path for other OpenSlide-readable inputs/masks.
-Only level 0 is exported, not all channels/focal planes of multidimensional inputs.
+The default pyramid reuses compatible tissue levels and generates smaller
+overviews from sanitized output. The original level 0 is never re-encoded in
+preserve mode. This does not export all channels/focal planes of complex inputs.
 No OCR can establish that arbitrary image pixels contain no identifiers. The
 caller must review pixels, and can supply level-0 rectangles to erase. Setting
 pixels_reviewed=True records a caller assertion, not an automated certification.
@@ -242,7 +244,7 @@ def _jpeg_entropy(data, *, restart_segment=False):
         raise ValueError("Unsupported marker inside JPEG scan")
 
 
-def _preserve_jpeg(source, target, dimensions, mpp, emit):
+def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, append=False):
     """Repackage JPEG coding data, never invoke an encoder.
 
     tifffile exposes NDPI restart segments as virtual MCU-row tiles. Group
@@ -252,7 +254,7 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit):
     import imagecodecs
 
     with tifffile.TiffFile(source) as original:
-        page = original.pages[0]
+        page = original.pages[page_index]
         width, height = dimensions[0]
         if (page.imagewidth, page.imagelength) != (width, height):
             raise ValueError("Primary TIFF page does not match OpenSlide level 0")
@@ -344,20 +346,20 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit):
                     index += 1
             emit("write", total, total)
 
-        with tifffile.TiffWriter(target, bigtiff=True) as writer:
+        with tifffile.TiffWriter(target, bigtiff=True, append=append) as writer:
             writer.write(tiles(), shape=(height, width, 3), dtype=np.uint8,
                          tile=(th * group, tw), photometric="ycbcr", compression="jpeg",
                          subsampling=subsampling, metadata=None, description=None,
-                         software=False, datetime=False, subfiletype=0,
+                         software=False, datetime=False, subfiletype=1 if append else 0,
                          resolution=None if mpp is None else (10000 / mpp[0], 10000 / mpp[1]),
                          resolutionunit="CENTIMETER" if mpp else "NONE")
         expected = digest.digest()
 
     digest = hashlib.sha256()
     with tifffile.TiffFile(target) as output:
-        if len(output.pages) != 1 or not output.is_bigtiff:
+        if (not append and len(output.pages) != 1) or not output.is_bigtiff:
             raise ValueError("Unexpected output TIFF structure")
-        page = output.pages[0]
+        page = output.pages[-1] if append else output.pages[0]
         allowed = {254, 256, 257, 258, 259, 262, 277, 282, 283, 284, 296,
                    322, 323, 324, 325, 530, 532}
         if set(page.tags.keys()) - allowed or any(int(t.dtype) == 2 for t in page.tags.values()):
@@ -379,12 +381,146 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit):
     return total
 
 
+def _append_overview(target, openslide, mpp, compression, notify):
+    """Append a 4x reduced tiled level from the sanitized output, bounded buffers."""
+    import imagecodecs
+    from PIL import Image
+    tile, factor, halo = 256, 4, 16
+    digest = hashlib.sha256()
+    with openslide.OpenSlide(str(target)) as parent:
+        level = parent.level_count - 1
+        pw, ph = parent.level_dimensions[level]
+        width, height = math.ceil(pw / factor), math.ceil(ph / factor)
+        scale = parent.level_downsamples[level]
+        total = math.ceil(width / tile) * math.ceil(height / tile)
+        def tiles():
+            index = 0
+            for y in range(0, height, tile):
+                for x in range(0, width, tile):
+                    notify(index / total * 0.7)
+                    location = (round((x * factor - halo) * scale), round((y * factor - halo) * scale))
+                    with parent.read_region(location, level, (tile * factor + 2 * halo,) * 2) as rgba:
+                        white = Image.new("RGB", rgba.size, "white")
+                        try:
+                            white.paste(rgba, mask=rgba.getchannel("A"))
+                            with white.resize((tile + 2 * halo // factor,) * 2, Image.Resampling.LANCZOS) as small:
+                                with small.crop((halo // factor, halo // factor, tile + halo // factor, tile + halo // factor)) as cropped:
+                                    rgb = np.asarray(cropped).copy()
+                        finally:
+                            white.close()
+                    if x + tile > width:
+                        rgb[:, max(0, width - x):] = 255
+                    if y + tile > height:
+                        rgb[max(0, height - y):] = 255
+                    if compression == "preserve":
+                        data = imagecodecs.jpeg_encode(rgb, level=90, subsampling=(2, 2))
+                        header, offset, _, _ = _jpeg_header(data)
+                        data = header + _jpeg_entropy(data[offset:]) + b"\xff\xd9"
+                    else:
+                        data = imagecodecs.deflate_encode(rgb, level=1)
+                    digest.update(struct.pack("<Q", len(data)))
+                    digest.update(data)
+                    yield data
+                    index += 1
+        if shutil.disk_usage(target.parent).free < total * tile * tile * 3 + 16 * 1024**2:
+            raise OSError("Not enough space for pyramid overview")
+        with tifffile.TiffWriter(target, append=True) as writer:
+            writer.write(tiles(), shape=(height, width, 3), dtype=np.uint8, tile=(tile, tile),
+                         compression="jpeg" if compression == "preserve" else "deflate",
+                         photometric="ycbcr" if compression == "preserve" else "rgb",
+                         subsampling=(2, 2) if compression == "preserve" else None,
+                         metadata=None, description=None, software=False, datetime=False, subfiletype=1,
+                         resolution=None if mpp is None else (10000 / (mpp[0] * parent.dimensions[0] / width),
+                                                              10000 / (mpp[1] * parent.dimensions[1] / height)),
+                         resolutionunit="CENTIMETER" if mpp else "NONE")
+    expected = digest.digest()
+    digest = hashlib.sha256()
+    with tifffile.TiffFile(target) as tif:
+        page = tif.pages[-1]
+        for index, (offset, size) in enumerate(zip(page.dataoffsets, page.databytecounts)):
+            notify(0.7 + 0.3 * index / total)
+            tif.filehandle.seek(offset)
+            data = tif.filehandle.read(size)
+            digest.update(struct.pack("<Q", len(data)))
+            digest.update(data)
+            if compression == "preserve":
+                decoded = imagecodecs.jpeg_decode(data)
+                if decoded.shape != (tile, tile, 3):
+                    raise ValueError("Pyramid JPEG tile decode failed")
+            elif len(imagecodecs.deflate_decode(data)) != tile * tile * 3:
+                raise ValueError("Pyramid Deflate tile decode failed")
+        if len(page.dataoffsets) != total or digest.digest() != expected:
+            raise ValueError("Pyramid compressed data changed")
+    notify(1.0)
+    return (width, height), total
+
+
+def _append_pyramid(source, target, slide, openslide, mpp, compression, emit):
+    """Reuse only recognized tissue levels; never copy label/macro/thumbnail IFDs."""
+    dimensions = [slide.dimensions]
+    candidates = []
+    if compression == "preserve":
+        with tifffile.TiffFile(source) as tif:
+            for index, page in enumerate(tif.pages):
+                shape = (page.imagewidth, page.imagelength)
+                if index == 0 or shape not in slide.level_dimensions[1:]:
+                    continue
+                if not page.is_tiled or page.compression != 7 or page.photometric != 6 or page.jpegtables:
+                    continue
+                if page.is_ndpi:
+                    if not page.jpegheader or page.tags[65421].value <= 0:
+                        continue
+                    if page.imagewidth % page.tilewidth or page.imagelength % 16 or page.tilewidth % 16:
+                        continue
+                candidates.append((index, shape))
+    candidates.sort(key=lambda item: item[1][0], reverse=True)
+    end = candidates[-1][1] if candidates else dimensions[0]
+    generated_count = 0
+    while max(end) > 512:
+        end = (math.ceil(end[0] / 4), math.ceil(end[1] / 4))
+        generated_count += 1
+    steps = len(candidates) + generated_count
+    verified = 0
+    done = 0
+    def notify(fraction):
+        emit("pyramid", done + fraction, max(steps, 1))
+    for index, shape in candidates:
+        if not all(a < b for a, b in zip(shape, dimensions[-1])):
+            continue
+        scaled_mpp = None if mpp is None else (mpp[0] * dimensions[0][0] / shape[0],
+                                               mpp[1] * dimensions[0][1] / shape[1])
+        def progress(stage, completed, total):
+            notify((0 if stage == "write" else 0.7) + (0.7 if stage == "write" else 0.3) * completed / max(total, 1))
+        verified += _preserve_jpeg(source, target, [shape], scaled_mpp, progress, page_index=index, append=True)
+        dimensions.append(shape)
+        done += 1
+    preserved = len(dimensions)
+    while max(dimensions[-1]) > 512:
+        shape, tiles = _append_overview(target, openslide, mpp, compression, notify)
+        verified += tiles
+        dimensions.append(shape)
+        done += 1
+    allowed = {254, 256, 257, 258, 259, 262, 277, 282, 283, 284, 296, 322, 323, 324, 325, 530, 532}
+    with tifffile.TiffFile(target) as tif:
+        if len(tif.pages) != len(dimensions):
+            raise ValueError("Unexpected pyramid page count")
+        for index, page in enumerate(tif.pages):
+            if (not page.is_tiled or page.subifds or page.subfiletype != (1 if index else 0)
+                    or (page.imagewidth, page.imagelength) != dimensions[index]
+                    or set(page.tags.keys()) - allowed
+                    or any(int(tag.dtype) == 2 for tag in page.tags.values())):
+                raise ValueError("Invalid pyramid structure or unexpected metadata")
+    emit("pyramid", 1, 1)
+    return dimensions, verified, preserved if compression == "preserve" else 0, len(dimensions) - preserved
+
+
 def anonymize_wsi(
     input_path: str | Path,
     output_dir: str | Path | None = None,
     *,
     run_id: str | None = None,
     compression: str = "preserve",
+    pyramid: bool = True,
     export_image: bool = True,
     export_csv: bool = True,
     include_filename: bool = True,
@@ -396,7 +532,7 @@ def anonymize_wsi(
     progress: Callable[[dict], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> dict:
-    """Export the highest-resolution image as a single-page TIFF.
+    """Export tissue as standard pyramidal TIFF (or explicitly single-image).
 
     output_dir: base directory; default is input's parent/output. A timestamp
         subdirectory contains anonymous_<uuid>.tiff and metadata.csv.
@@ -406,6 +542,10 @@ def anonymize_wsi(
         Supports self-contained baseline YCbCr JPEG TIFF tiles and indexed NDPI
         with 1x1 component sampling, full restart rows, and compatible geometry.
         Other layouts raise ValueError. 'lossless' explicitly uses RGB/Deflate.
+    pyramid: True by default. Reuse compatible source tissue levels in preserve
+        mode, then generate 4x overviews down to <=512 pixels on the longest edge.
+        Additional overviews use JPEG quality 90 (or Deflate in lossless mode).
+        Base pixels are not re-encoded in preserve mode. False exports level 0 only.
     export_image, export_csv: choose TIFF, CSV, or both (default). At least one
         must be True. CSV-only mode reads technical metadata without conversion
         or pixel validation; output_path is None. Without CSV, csv_path is None.
@@ -438,7 +578,7 @@ def anonymize_wsi(
     starting with spreadsheet formula characters are prefixed with an apostrophe.
     """
     source = Path(input_path).expanduser().resolve(strict=True)
-    if not all(isinstance(v, bool) for v in (export_image, export_csv, include_filename)):
+    if not all(isinstance(v, bool) for v in (export_image, export_csv, include_filename, pyramid)):
         raise TypeError("Export options must be boolean")
     if not export_image and not export_csv:
         raise ValueError("Select TIFF image or CSV information to export")
@@ -465,7 +605,10 @@ def anonymize_wsi(
         if cancelled is not None and cancelled():
             raise ExportCancelled("Export cancelled")
         if progress is not None:
-            base, scale = (0, 70) if stage == "write" else (70, 30)
+            if pyramid and export_image:
+                base, scale = {"write": (0, 55), "verify": (55, 25), "pyramid": (80, 15), "finalize": (95, 5)}[stage]
+            else:
+                base, scale = (0, 70) if stage == "write" else (70, 30)
             percent = round(base + scale * completed / max(1, total), 1)
             if last_progress[0] != (stage, percent):
                 last_progress[0] = (stage, percent)
@@ -594,13 +737,24 @@ def anonymize_wsi(
                                 emit("verify", verified, total)
                         if count != tiles_per_level[level] or digest.hexdigest() != hashes[level]:
                             raise ValueError("Decoded output pixels do not match exported pixels")
+            preserved_levels = 1 if compression == "preserve" else 0
+            generated_levels = 0
+            if pyramid:
+                dimensions, extra_verified, preserved_levels, generated_levels = _append_pyramid(
+                    source, temporary, slide, openslide, mpp, compression, emit)
+                verified += extra_verified
             with openslide.OpenSlide(str(temporary)) as check:
                 if list(check.level_dimensions) != dimensions or check.associated_images:
-                    raise ValueError("Output single-image readback failed")
+                    raise ValueError("Output pyramid/level readback failed")
                 if check.properties.get("openslide.vendor") != "generic-tiff":
                     raise ValueError("Output is not a generic tiled TIFF")
                 with check.read_region((0, 0), 0, (64, 64)) as region:
                     region.load()
+                if pyramid:
+                    with check.get_thumbnail((512, 512)) as thumbnail:
+                        thumbnail.load()
+                        if max(thumbnail.size) > 512:
+                            raise ValueError("Output thumbnail validation failed")
                 if compression == "preserve":
                     width, height = dimensions[0]
                     size = (min(256, width), min(256, height))
@@ -612,6 +766,8 @@ def anonymize_wsi(
                                     check.read_region((int(x), int(y)), 0, size) as b:
                                 if not np.array_equal(np.asarray(a), np.asarray(b)):
                                     raise ValueError("Source/output sampled pixels differ")
+            if pyramid:
+                emit("finalize", 1, 1)
             stat_after = source.stat()
             if (stat_before.st_size, stat_before.st_mtime_ns) != (stat_after.st_size, stat_after.st_mtime_ns):
                 raise ValueError("Input changed during export")
@@ -625,18 +781,23 @@ def anonymize_wsi(
                 temporary.unlink()
             temporary = None
             result = {
-                "output_path": str(target), "directory": str(folder), "format": "single-page-bigtiff",
+                "output_path": str(target), "directory": str(folder),
+                "format": "pyramidal-bigtiff" if pyramid else "single-page-bigtiff",
+                "pyramid": pyramid, "preserved_levels": preserved_levels, "generated_levels": generated_levels,
+                "thumbnail_verified": pyramid,
                 "status": "metadata_clean_pixels_reviewed" if pixels_reviewed else "metadata_clean_pixel_review_required",
                 "metadata_clean": True, "pixel_review_asserted_by_caller": pixels_reviewed,
                 "redaction_count": len(boxes), "level_dimensions": [list(d) for d in dimensions],
                 "mpp": list(mpp) if mpp else None, "compression": "jpeg-preserved" if compression == "preserve" else "deflate-lossless",
                 "all_output_tiles_verified": True, "verified_tiles": verified,
-                "verification": "compressed-sha256-and-all-tiles-decode" if compression == "preserve" else "all-decoded-pixels-sha256",
+                "verification": "compressed-sha256-and-all-tiles-decode" if compression == "preserve" else
+                                ("base-pixels-sha256-and-pyramid-compressed-sha256" if pyramid else "all-decoded-pixels-sha256"),
                 "source_output_pixel_regions_verified": 25 if compression == "preserve" else 0,
                 "source_metadata_copied": False, "associated_images_copied": False,
                 "source_compressed_payload_copied": compression == "preserve",
                 "jpeg_app_com_removed": compression == "preserve",
-                "reencoded": compression != "preserve", "icc_profile_copied": False,
+                "reencoded": compression != "preserve" or generated_levels > 0,
+                "base_image_reencoded": compression != "preserve", "icc_profile_copied": False,
                 "representation": "OpenSlide 2D RGB; not all focal planes/channels",
                 "size_bytes": target.stat().st_size,
             }
@@ -644,7 +805,7 @@ def anonymize_wsi(
                 "original_filename": source.name if include_filename else "", "output_filename": target.name,
                 "source_format": source.suffix.lower(), "mpp_x_um": source_mpp[0], "mpp_y_um": source_mpp[1],
                 "width_px": dimensions[0][0], "height_px": dimensions[0][1],
-                "objective_power": objective, "source_level_count": source_level_count, "output_pages": 1,
+                "objective_power": objective, "source_level_count": source_level_count, "output_pages": len(dimensions),
                 "source_size_bytes": stat_before.st_size, "output_size_bytes": result["size_bytes"],
                 "compression": result["compression"], "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "status": result["status"], "verified_tiles": verified,
@@ -668,6 +829,7 @@ def _main():
     parser.add_argument("input")
     parser.add_argument("output", nargs="?")
     parser.add_argument("--compression", choices=("preserve", "lossless"), default="preserve")
+    parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
     parser.add_argument("--pixels-reviewed", action="store_true")
     parser.add_argument("--redact", type=int, nargs=4, action="append", default=[], metavar=("X", "Y", "W", "H"))
     args = parser.parse_args()
@@ -680,7 +842,8 @@ def _main():
             last[0] = percent
 
     result = anonymize_wsi(args.input, args.output, redactions=args.redact,
-                           pixels_reviewed=args.pixels_reviewed, compression=args.compression, progress=show_progress)
+                           pixels_reviewed=args.pixels_reviewed, compression=args.compression,
+                           pyramid=not args.single_image, progress=show_progress)
     print(json.dumps(result, ensure_ascii=True, indent=2))
 
 
