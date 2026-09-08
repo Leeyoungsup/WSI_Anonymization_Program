@@ -27,12 +27,20 @@ def main():
     validation = ROOT / "docs" / "release_validation.md"
     if validation.exists():
         shutil.copy2(validation, folder / "VALIDATION.md")
+    pyramid_validation = ROOT / "docs" / "pyramid_tiff_validation.md"
+    if pyramid_validation.exists():
+        shutil.copy2(pyramid_validation, folder / pyramid_validation.name)
     packages = ["openslide-python", "openslide-bin", "numpy", "Pillow", "tifffile", "imagecodecs",
                 "PySide6", "PySide6_Essentials", "shiboken6", "pyinstaller", "pyinstaller-hooks-contrib",
                 "packaging", "psutil", "cffi", "pycparser", "setuptools", "pywin32", "six"]
     licenses = folder / "THIRD_PARTY_LICENSES"
+    installed_packages = []
     for name in packages:
-        dist = metadata.distribution(name)
+        try:
+            dist = metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            continue
+        installed_packages.append(name)
         for file in dist.files or []:
             if any(word in str(file).lower() for word in ("license", "copying", "copyright", "notice")):
                 source = Path(dist.locate_file(file))
@@ -70,7 +78,7 @@ def main():
     (folder / "BUILD_INFO.json").write_text(json.dumps({
         "version": VERSION, "platform": "Windows x64", "python": sys.version,
         "built_at_utc": datetime.now(timezone.utc).isoformat(), "exe_sha256": digest,
-        "packages": {name: metadata.version(name) for name in packages},
+        "packages": {name: metadata.version(name) for name in installed_packages},
         "application_sources_sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files},
     }, indent=2), encoding="utf-8")
     archive_path = ROOT / "release" / (NAME + ".zip")

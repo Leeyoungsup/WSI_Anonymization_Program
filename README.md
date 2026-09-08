@@ -1,20 +1,24 @@
 # WSI Anonymization Program
 
-WSI의 **최대 해상도 영상 한 장만**, **원본 JPEG 압축 데이터를 유지해 재압축 없이 TIFF로 저장**합니다. 축소 피라미드와 추가 페이지는 만들지 않습니다. 실행 날짜·시간 폴더에 TIFF와 원본 파일명/기술 정보를 담은 CSV를 함께 저장합니다.
+SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도와 호환되는 원본 조직 축소 레벨은 JPEG 압축 데이터를 유지합니다. 더 작은 미리보기 레벨만 생성하며 OpenSlide의 `get_thumbnail()`을 사용할 수 있습니다.
 
-```text
-output/
-└── 20260908_153000_123456/
-    ├── anonymous_<ID1>.tiff
-    ├── anonymous_<ID2>.tiff
-    └── metadata.csv
-```
+## Windows EXE
 
-폴더 이름은 로컬 시각 `YYYYMMDD_HHMMSS_ffffff`입니다. 끝의 마이크로초는 실행 간 이름 충돌을 줄입니다. 한 번의 GUI 일괄 실행은 한 폴더와 CSV를 공유하고, 다음 실행은 새 폴더를 생성합니다.
+`release/WSI_Anonymization-1.1.0-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
 
-## 독립 함수 사용
+파일 추가 또는 드래그 → 옵션 선택 → 출력 폴더 선택 → **선택 항목 내보내기** 순서입니다. 각 항목 옆 **i** 버튼에서 설명을 확인할 수 있습니다.
 
-**[`wsi_anonymizer.py`](wsi_anonymizer.py)**만 다른 프로젝트로 복사하면 됩니다. Python 3.10 이상과 다음 라이브러리가 필요합니다.
+- TIFF 영상 / 슬라이드 정보 CSV: 하나 이상을 선택해야 합니다.
+- CSV에 원본 파일명 포함: 해제하면 해당 열은 빈칸입니다.
+- TIFF에 MPP 보존: 실제 픽셀 크기를 TIFF 해상도에 기록합니다. 해제해도 선택한 CSV에는 MPP가 남습니다.
+- 압축: 원본 JPEG 유지가 기본값입니다. 무손실 Deflate를 선택하면 파일 크기가 크게 늘 수 있습니다.
+- 출력 구조: 표준 피라미드 TIFF가 기본값입니다. 이전 단일 해상도 TIFF도 선택할 수 있습니다.
+
+기본 결과 폴더는 Windows 문서 폴더의 `WSI Exports`입니다. 선택한 폴더 아래 로컬 시각 `YYYYMMDD_HHMMSS_ffffff` 폴더를 만들고 TIFF·CSV를 저장합니다. 한 GUI 일괄 실행은 같은 폴더/CSV를 공유합니다.
+
+## 독립 함수
+
+**wsi_anonymizer.py** 하나를 다른 프로젝트로 복사할 수 있습니다. Python 3.10 이상과 다음 의존성이 필요합니다.
 
 ```shell
 pip install openslide-python "openslide-bin>=4.0.1.2" numpy tifffile imagecodecs Pillow
@@ -23,147 +27,86 @@ pip install openslide-python "openslide-bin>=4.0.1.2" numpy tifffile imagecodecs
 ```python
 from wsi_anonymizer import anonymize_wsi
 
-# 두 번째 인자는 TIFF 파일명이 아니라 출력 기본 폴더입니다.
-result = anonymize_wsi("input/slide.ndpi", "output")
+result = anonymize_wsi(
+    "slide.ndpi", "output",
+    compression="preserve", pyramid=True,
+    export_image=True, export_csv=True,
+    include_filename=True, preserve_mpp=True,
+)
 print(result["output_path"])
 print(result["csv_path"])
 ```
 
-여러 입력을 같은 폴더/CSV에 넣을 때는 하나의 `run_id`로 순차 호출합니다.
+두 번째 인자는 TIFF 파일명이 아닌 출력 기본 폴더입니다. 여러 파일을 같은 폴더에 저장하려면 `datetime.now().strftime("%Y%m%d_%H%M%S_%f")`로 만든 하나의 `run_id`를 순차 호출에 전달합니다. 같은 폴더에 동시 쓰기는 지원하지 않습니다.
 
-```python
-from datetime import datetime
-from wsi_anonymizer import anonymize_wsi
+CSV만 선택하면 영상 변환·픽셀 검증 없이 기술 정보를 저장하며 `output_path=None`입니다. TIFF만 선택하면 `csv_path=None`입니다.
 
-run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-for source in ["input/slide.svs", "input/slide.ndpi"]:
-    anonymize_wsi(source, "output", run_id=run_id)
+`pyramid=False`로 최대 해상도만 저장할 수 있습니다. 픽셀 마스킹은 `compression="lossless", redactions=[(x, y, 폭, 높이)]`로 요청합니다. 이 경우 축소 레벨도 마스킹된 출력에서 생성합니다.
+
+CLI:
+
+```shell
+python wsi_anonymizer.py input.ndpi output
+python wsi_anonymizer.py input.ndpi output --single-image
 ```
 
-기본값은 `compression="preserve"`입니다. 독립된 baseline YCbCr JPEG 타일을 가진 SVS/TIFF와, 지원되는 JPEG restart 구조의 NDPI를 처리합니다. 샘플 SVS·NDPI 모두 재압축 없이 검증했습니다. 지원하지 않는 압축·구조는 오류를 반환하며 자동으로 재압축하지 않습니다. 다채널·다중 초점면 전체를 보존하는 변환은 아니며 최대 해상도 level 0만 출력합니다.
+## 압축과 피라미드
 
-SVS는 기존 JPEG 타일을 옮깁니다. NDPI는 TIFF 규격에 맞게 독립된 restart 구간을 세로로 묶고 JPEG 크기·restart 번호를 수정합니다. 압축 영상 데이터와 양자화 테이블은 유지하며 JPEG 인코더는 호출하지 않습니다. 현재 NDPI 보존 경로는 1×1 색상 샘플링과 완전한 restart 행, 호환되는 영상 크기를 요구합니다. 헤더가 추가되므로 출력이 항상 원본보다 작다는 보장은 없습니다.
+원본 압축 유지 경로는 독립 baseline YCbCr JPEG 타일의 SVS/TIFF와 지원되는 NDPI restart 구조를 처리합니다. 최대 해상도의 지원하지 않는 구조는 오류로 알리며 자동 재압축하지 않습니다. NDPI는 현재 1×1 색상 샘플링과 완전한 restart 행, 호환되는 영상 크기를 요구합니다.
 
-다른 OpenSlide 지원 형식이나 픽셀 마스킹이 필요하면 `compression="lossless"`를 명시해 기존 RGB/Deflate 방식을 사용할 수 있습니다. 이 경우 파일 크기가 크게 늘 수 있습니다. GUI의 기본 내보내기는 원본 압축 유지 방식입니다.
+호환되는 원본 조직 축소 레벨도 압축을 유지합니다. 마지막 레벨의 긴 변이 512 이하가 될 때까지 검증된 출력 영상을 작은 영역씩 읽어 4배 축소 레벨을 추가합니다. 추가 레벨은 JPEG 품질 90, 명시적 lossless 모드에서는 Deflate를 사용합니다. NDPI 타일 헤더와 추가 레벨 때문에 결과가 항상 원본보다 작지는 않습니다.
 
-## CSV 항목
+반환값 `base_image_reencoded`는 최대 해상도 재압축 여부, `preserved_levels`는 압축을 유지한 레벨 수, `generated_levels`는 추가 생성 레벨 수입니다. `reencoded`는 추가 레벨을 생성해도 True입니다. 모든 채널·초점면을 보존하는 변환은 아닙니다.
 
-`metadata.csv`는 Excel에서 한글을 읽을 수 있도록 UTF-8 BOM과 표준 CSV 인용 규칙을 사용합니다. 유효한 기술 수치만 가져오며 알 수 없는 값은 빈칸입니다.
+## 익명화와 CSV
 
-| 항목 | CSV 열 |
+모든 출력 레벨에서 원본 개인정보 태그·설명·ICC·JPEG APP/COM 부가정보를 제외합니다. 원본 라벨·매크로·별도 썸네일·미참조 파일 영역은 복사하지 않습니다. 조직 영상에 직접 적힌 식별자는 별도 검토 대상입니다. `pixels_reviewed=True`는 호출자의 검토 확인이며 자동 인증이 아닙니다. ICC 제외로 색상 관리 뷰어의 표시가 달라질 수 있습니다.
+
+CSV는 UTF-8 BOM으로 저장하며 다음 기술 정보를 기록합니다.
+
+| 내용 | 열 |
 |---|---|
-| 원본/출력 파일명 | `original_filename`, `output_filename` |
-| 입력 확장자 | `source_format` |
-| X·Y MPP (µm/pixel) | `mpp_x_um`, `mpp_y_um` |
-| 가로·세로 픽셀 수 | `width_px`, `height_px` |
-| 대물렌즈 배율 | `objective_power` |
-| 원본 영상 레벨 수 / 출력 영상 수 | `source_level_count`, `output_pages` |
-| 입력/출력 바이트 수 | `source_size_bytes`, `output_size_bytes` |
-| 압축 방식 / 내보낸 시각 | `compression`, `exported_at` |
-| 처리 상태 / 검증 타일 수 / 사용자 영상 검토 여부 | `status`, `verified_tiles`, `pixel_review_asserted_by_caller` |
+| 원본/출력 파일명 | original_filename, output_filename |
+| 형식·MPP | source_format, mpp_x_um, mpp_y_um |
+| 영상 크기·배율 | width_px, height_px, objective_power |
+| 원본/출력 레벨 수 | source_level_count, output_pages |
+| 파일 크기·압축 | source_size_bytes, output_size_bytes, compression |
+| 처리 시각·상태·검증 | exported_at, status, verified_tiles, pixel_review_asserted_by_caller |
 
-환자명, 환자/검체 ID, 스캔 날짜, 스캐너 일련번호, 자유 텍스트는 메타데이터에서 추출하지 않습니다. **원본 파일명은 요청에 따라 그대로 기록하므로 파일명 자체에 개인정보가 있다면 CSV에도 포함됩니다.** Excel 수식으로 해석될 수 있는 `=`, `+`, `-`, `@`로 시작하는 파일명에는 앞에 작은따옴표를 붙입니다.
+환자명·환자/검체 ID·스캔 날짜·스캐너 일련번호·자유 텍스트를 메타데이터에서 CSV로 옮기지 않습니다. **원본 파일명 포함을 선택하면 파일명 자체의 개인정보는 CSV에 남습니다.** 수식으로 해석될 수 있는 파일명에는 작은따옴표를 붙입니다. 알 수 없는 기술 수치는 빈칸입니다.
 
-검증에 성공한 파일만 CSV 행을 추가합니다. 기존 CSV를 임시 파일로 재작성한 뒤 교체하며, CSV 저장 실패 시 해당 호출이 새로 만든 TIFF를 정리합니다. 같은 `run_id`에 대한 동시 쓰기는 지원하지 않으므로 순차 호출하세요. CSV 잠금 충돌은 데이터 손실 없이 오류로 처리합니다.
+검증에 성공한 결과만 CSV에 기록합니다. Excel이 `metadata.csv` 교체를 막으면 전체 목록을 담은 `metadata_<시각>.csv`로 저장하고 실제 경로를 반환합니다. 이후 호출은 최신 전체 목록을 이어서 기록합니다. CSV 저장까지 실패하면 해당 호출이 새로 만든 TIFF를 정리합니다. 원본을 변경하거나 기존 결과를 덮어쓰지 않습니다.
 
-Excel 등에서 `metadata.csv`를 열어 교체가 막힌 경우, 전체 행을 담은 `metadata_<저장 시각>.csv`를 새로 저장합니다. 반환값 `csv_path`와 GUI 상세 정보가 최신 CSV를 가리킵니다. 이후 호출은 기존 CSV와 스냅샷의 행을 출력 파일명 기준으로 합쳐 이전 성공 파일을 빠뜨리지 않습니다.
-
-## Windows 프로그램
-
-**`Launch_WSI.vbs`를 더블클릭**하거나 다음 명령으로 실행합니다.
-
-```powershell
-conda run -n yslee python -m pip install -r requirements.txt
-conda run --no-capture-output -n yslee python app.py
-```
-
-`샘플 불러오기` → `전체 검사` → 출력 기본 폴더 선택 → `비식별 TIFF 내보내기` 순서입니다. `결과 폴더 열기`는 가장 최근에 완료된 실행 폴더를 엽니다. 단독 EXE는 아직 포함하지 않았습니다.
-
-축소 레벨이 없는 대용량 단일 TIFF는 전체 영상의 메모리 로딩을 피하기 위해 썸네일을 생략합니다. 구조와 영역 읽기 검사는 수행합니다.
-
-## 영상 처리와 검증
-
-- 타일로 나누어 읽고 저장해 전체 WSI를 메모리에 올리지 않습니다. 타일은 내부 저장 단위이며 출력 영상/페이지는 1개입니다.
-- 4GB 초과 출력을 지원하는 BigTIFF를 사용하며 기본 모드에서는 원본 JPEG 압축 데이터를 유지합니다.
-- 원본 설명·라벨·매크로·썸네일·ICC·전용 태그·미참조 파일 영역은 복사하지 않습니다. JPEG 내부의 APP/COM 부가정보도 제거합니다. 압축 영상 데이터와 필요한 코딩 테이블, 숫자 MPP는 보존합니다.
-- 모든 출력 압축 타일의 SHA-256을 기록 시점과 비교하고 모든 타일을 디코딩합니다. OpenSlide로 원본과 출력의 25개 영역 픽셀을 비교하며, 단일 영상·허용된 구조 태그만 남았는지 검사합니다.
-- 원본 파일은 보존하며 취소/실패 시 임시 TIFF를 정리합니다. 실패한 실행의 빈 날짜 폴더는 남을 수 있습니다.
-
-영상에 직접 적힌 개인정보는 별도 검토 대상입니다. 압축 유지 모드는 원본 픽셀과 타일 가장자리 패딩도 유지합니다. `compression="lossless", redactions=[(x, y, 폭, 높이)]`를 명시하면 level 0 좌표 영역을 흰색으로 가릴 수 있습니다. `pixels_reviewed=True`는 사용자가 남은 영상을 검토했다는 확인이며 자동 인증이 아닙니다. 자세한 정책은 [처리 정책](docs/processing_policy.md)을 참고하세요.
-
-## 테스트
-
-실제 두 샘플의 최신 결과는 [원본 압축 유지 TIFF 검증 기록](docs/preserved_tiff_validation.md)에 정리했습니다. 이전 [Deflate 단일 TIFF 기록](docs/single_tiff_validation.md)은 과거 버전의 결과입니다.
-
-```powershell
-conda run --no-capture-output -n yslee python tests/test_standalone.py
-conda run --no-capture-output -n yslee python tests/test_preserved.py
-conda run --no-capture-output -n yslee python tests/smoke_gui.py
-conda run --no-capture-output -n yslee python tests/integration_tiff.py
-```
-
-마지막 명령은 실제 샘플 전체를 처리하므로 시간이 걸립니다. 출력은 `output/<실행 시각>/`, 검증 기록은 `artifacts/pyramid_tiff_validation.json`에 저장합니다. 과거 `output/clean_tiff/`의 피라미드 출력은 이전 버전 결과입니다.
-
-명령행에서도 입력 파일과 출력 **폴더**를 지정합니다.
-
-```powershell
-conda run --no-capture-output -n yslee python wsi_anonymizer.py input.ndpi output
-```
-
-## ???? ??? ?? ??
-
-GUI? **???? ??**?? TIFF ??, ???? ?? CSV, CSV ?? ??? ??, TIFF MPP ??? ?????. ? ?? ? **i** ??? ???? ??? ????. ?? ??? ?? JPEG ??? ????? ??? Deflate? ??? ?? ????. ???? ????? ??? ?? ?????. TIFF? CSV? ?? ???? ???? ??? ???????.
-
-- TIFF?: CSV? ??? ????.
-- CSV?: ?? ??? ???? ?? ????? ??? ?? ????.
-- ?? ??? ??: CSV? `original_filename`? ?????.
-- TIFF MPP ??: TIFF ???? ?? MPP? ?? ????. CSV? ???? ?? MPP? CSV? ????.
-
-??? ??? ?? ????? ??? ? ????.
-
-```python
-result = anonymize_wsi(
-    "slide.ndpi", "output",
-    export_image=True, export_csv=True,
-    include_filename=False, preserve_mpp=True,
-    compression="preserve",
-)
-```
-
-CSV ?? ??? `output_path=None`, TIFF ?? ??? `csv_path=None`???. ?? ?? ??? `python tests/test_export_options.py`? ?????.
-
-## OpenSlide?? ?? ??
-
-Windows `yslee`? OpenSlide Python 1.3.1?? ? ??? `import openslide`? DLL? ?? ??? ??? ??????. 1.4.6?? ??????, requirements?? ??????. ? Python ?????? ?? ?? ?? TIFF ? ?? ??? ?? ??? ??????. ?? ?? ?? Jupyter ???? Python ????? ????? ???.
+## OpenSlide 읽기
 
 ```python
 import openslide
 
-with openslide.OpenSlide(r"output/????/anonymous_ID.tiff") as slide:
-    print(slide.dimensions, slide.level_count)
+with openslide.OpenSlide(r"결과파일.tiff") as slide:
+    preview = slide.get_thumbnail((512, 512))
     patch = slide.read_region((0, 0), 0, (512, 512))
-    patch.save("patch.png")
+    preview.close()
     patch.close()
 ```
 
-?? ??? ??? level 0?? ????. ?? ???? ??? ????? `slide.get_thumbnail((512, 512))`? ?? ? ????. ?? ???? ??? ??? ???? ? ??? `get_thumbnail()`? ?? ???? ? ? ????.
+피라미드 출력의 미리보기는 축소 레벨을 사용합니다. 단일 해상도를 선택한 대용량 파일은 get_thumbnail이 많은 메모리를 사용할 수 있어 프로그램 미리보기를 생략합니다. `yslee`는 OpenSlide Python 1.4.6 / 라이브러리 4.0.1로 직접 import와 영역 읽기를 확인했습니다. 환경 업데이트 후 기존 Python/Jupyter 커널은 재시작하세요.
 
-?? ?? ??? ?? ??? ???? ????.
+진단: `python tools/check_openslide.py "결과파일.tiff"`.
 
-```powershell
-conda run --no-capture-output -n yslee python tools/check_openslide.py "????.tiff"
+## 개발·빌드·검증
+
+소스 GUI 실행은 `Launch_WSI.vbs` 또는 `conda run --no-capture-output -n yslee python app.py`입니다.
+
+```shell
+python -m pip install -r requirements-build.txt
+python tools/build_release.py
+python tests/test_standalone.py
+python tests/test_preserved.py
+python tests/test_pyramid.py
+python tests/test_export_options.py
+python tests/test_release.py
+python tests/test_release_gui.py
+python tests/integration_tiff.py
 ```
 
-??: [OpenSlide ?? Windows ?? ??](https://openslide.org/api/python/#installing).
-
-## EXE ???
-
-Python ?? ?? ???? Windows x64 ???? ??? ??? [??? ?? ??](docs/release_validation.md)? ??????. EXE? ?? ?? ??? ?? ??? `WSI Exports`???. ZIP?? ?? ??, ?? ????? ????? ???? ??? ?????.
-
-## ???? ??? ???
-
-????? ?? ??? ?? ?????. ?? ?? ???? ?? ??, ?? ??, JPEG APP/COM ????, ICC? ???? ??????? ??? ????. ?? ??? ?? ?? ???? ?? ?? ?????. CSV? ?? ???? ?? ? ?????.
-
-`pyramid=False` ?? CLI `--single-image`? ?? ?? ??? ??? ??? ? ????. ???? ?????? ?? ??? ???? ?????. OpenSlide? ???? ?? ??? ???? ?? ?? ???? ?????, ??? ?? thumbnail/label/macro ???? ????? ????.
-
-??? `base_image_reencoded`? ?? ??? ??? ??, `preserved_levels`? ??? ??? ?? ?, `generated_levels`? ?? ?? ?? ?? ????. `reencoded`? ?? ?? ??? ????? True???. CSV `output_pages`? ?? ?? ????. ?? ???? ??? lossless ???? ???? ?? ??? ???? ???? ?????.
+마지막 명령은 실제 샘플 전체를 처리합니다. 최신 결과는 [피라미드 검증 기록](docs/pyramid_tiff_validation.md), [릴리즈 기록](docs/release_validation.md), 세부 익명화 규칙은 [처리 정책](docs/processing_policy.md)에 있습니다. 이전 단일 TIFF·Deflate·clean_tiff 결과는 과거 버전 기록입니다.

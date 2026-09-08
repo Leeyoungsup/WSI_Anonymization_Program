@@ -1,38 +1,35 @@
-# Windows EXE 1.0.0 검증
+# Windows EXE 1.1.0 검증
 
-2026-09-08, 현재 Windows x64 PC의 yslee Python 3.12 환경에서 PyInstaller 6.17.0으로 빌드했습니다. 배포 형식은 콘솔 창이 없는 단일 EXE와 사용 안내·라이선스·재빌드용 소스를 담은 ZIP입니다. 인터넷 공개 게시 및 디지털 서명은 수행하지 않았습니다.
+배포 ZIP: `release/WSI_Anonymization-1.1.0-Windows-x64.zip`.
 
-파일: `release/WSI_Anonymization-1.0.0-Windows-x64.zip`
+기본 구조를 표준 피라미드 TIFF로 변경했습니다. 최대 해상도와 호환 원본 조직 축소 레벨의 JPEG 압축을 유지하고 필요한 작은 레벨만 추가 생성합니다. GUI에서 단일 해상도 TIFF도 선택할 수 있습니다. 모든 레벨에 개인정보 메타데이터 제거를 적용하며 영상에 직접 적힌 식별자는 사용자 검토 대상입니다.
 
-배포본은 현재 단일 해상도 TIFF 설정을 유지합니다. 피라미드/내장 썸네일 옵션은 포함하지 않습니다. 기본 출력은 Windows 문서 폴더 아래 `WSI Exports`이며, 샘플 데이터는 번들에 포함하지 않습니다.
+## 검증
 
-## 확인한 항목
+- 실제 SVS·NDPI를 각각 5개 레벨로 변환하고 원본 전체 SHA-256 보존, 전체 타일 무결성·디코딩, 최대 해상도 원본/출력 영역 픽셀 비교를 통과했습니다.
+- 두 실제 출력 파일 모두 OpenSlide의 get_thumbnail이 축소 레벨을 사용했습니다. 최대 해상도 전체를 할당하지 않았습니다.
+- 피라미드 전용 합성 테스트 3개 통과: 원본 두 레벨의 압축 데이터 일치, 작은 레벨 생성·미리보기, 개인정보 표식 제거, 마스크 전파, 생성 중 취소·정리.
+- 기존 standalone 10개, 압축 유지 6개, 옵션 GUI 테스트 통과.
+- 최종 EXE를 Python/Conda/QT 환경 변수 없이 PATH=Windows System32인 별도 프로세스에서 실행했습니다. 파일 검사, 원본 2개 레벨 보존+추가 1개 레벨 생성, JPEG/Deflate, CSV 전용, 취소와 원본 보존 검증을 통과했습니다.
+- GUI를 frozen 모드로 실행하여 실제 EXE 작업 프로세스에 연결했습니다. 작업 파일 전달, 진행률, TIFF/CSV 결과 수신, 임시 파일 정리를 검증했습니다. 사용자 데스크톱을 조작하는 자동화는 최종 검증에 사용하지 않았습니다.
 
-- Python/Conda/QT 환경 변수를 제거하고 PATH를 Windows System32로 제한한 별도 프로세스에서 EXE 실행.
-- EXE 작업 프로세스의 파일 검사, JPEG 압축 유지, 무손실 Deflate, CSV 전용 저장, 취소, 원본 보존 통과.
-- 실제 EXE의 GUI 창 생성과 Qt 로딩 확인.
-- GUI 코드를 frozen 모드로 실행하여 실제 EXE 작업 프로세스와 연결: 파일 기반 작업 전달, 진행률, TIFF/CSV 결과 수신, 임시 작업 파일 정리 통과. 데스크톱 입력에 의존하는 파일 선택 자동화는 검증 범위에 포함하지 않습니다.
-- 기존 옵션 GUI 테스트 통과.
-- 실제 SVS·NDPI 전체 파일을 EXE로 변환하고 압축 타일 무결성·전체 디코딩·OpenSlide 픽셀 비교 통과.
+실제 결과 크기와 미리보기 시간은 [피라미드 검증 기록](pyramid_tiff_validation.md)에 있습니다. SVS 약 1.07GB, NDPI 약 2.27GB이며 각각 원본 3개 레벨을 보존하고 작은 2개 레벨만 생성했습니다.
 
-| 입력 | EXE 출력 바이트 | 변환·검증 시간 |
-|---|---:|---:|
-| SVS | 995,229,102 | 39.5초 |
-| NDPI | 2,083,751,677 | 93.0초 |
+## 배포 환경
 
-실제 결과와 로그는 `artifacts/release_full_validation/`에 있으며 배포 ZIP에는 포함하지 않습니다. 첫 실행 압축 해제와 동시에 실행 중인 작업에 따라 시간은 달라집니다.
+현재 Windows x64 PC의 yslee Python 3.12.12 / PyInstaller 6.17.0에서 빌드했습니다. OpenSlide Python 1.4.6, OpenSlide 라이브러리 4.0.1, PySide6 6.8.3을 포함합니다. 별도의 Python 미설치 가상머신이나 다른 Windows 버전에서는 검증하지 않았습니다. 디지털 서명과 인터넷 공개 게시는 수행하지 않았습니다.
 
-## 빌드 시 반영한 내용
+기본 결과 폴더는 문서 폴더의 WSI Exports입니다. 원본 샘플은 번들에 포함하지 않습니다. ZIP에는 EXE, 사용 안내, 라이선스, 빌드 정보와 재빌드용 소스가 있습니다. 작업 임시 파일은 사용자 LocalAppData에 저장하고 완료 시 정리합니다.
 
-yslee의 기존 qt.conf가 다른 Conda Qt의 플러그인을 가리키므로 PySide6 6.8.3 휠의 플러그인으로 교체해 묶습니다. Conda Python의 ctypes가 필요로 하는 ffi.dll을 명시적으로 포함합니다. 콘솔 없는 EXE의 표준 입출력에 의존하지 않도록 GUI와 작업 프로세스가 사용자 LocalAppData의 임시 JSON 파일로 통신합니다.
+yslee의 기존 qt.conf가 다른 Qt 플러그인을 가리키므로 빌드 시 같은 PySide6 휠의 플러그인을 묶습니다. Conda Python ctypes의 ffi.dll을 명시적으로 포함합니다. 콘솔 없는 EXE는 표준 입출력 대신 임시 JSON 파일로 작업을 전달합니다.
 
-별도의 Python 미설치 가상머신이나 다른 Windows 버전에서의 검증은 수행하지 않았습니다. 실제 검증한 범위는 위와 같으며, 압축을 풀고 EXE를 실행하는 휴대용 배포본입니다.
+재현:
 
-재현 명령:
-
-```powershell
+```shell
 python -m pip install -r requirements-build.txt
 python tools/build_release.py
 python tests/test_release.py
 python tests/test_release_gui.py
 ```
+
+이전 단일 TIFF 릴리즈 기록은 `release_validation_1_0.md`입니다.
