@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import PySide6
@@ -30,7 +31,7 @@ def configure_qt():
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WSI Anonymization · Clean TIFF Export")
+        self.setWindowTitle("WSI Anonymization · Single TIFF + CSV")
         self.resize(1240, 820)
         self.setMinimumSize(950, 680)
         self.paths, self.results, self.previews = [], {}, {}
@@ -49,7 +50,7 @@ class Window(QMainWindow):
         title = QLabel("WSI Anonymization")
         title.setObjectName("title")
         layout.addWidget(title)
-        layout.addWidget(QLabel("WSI → TIFF  |  조직 영상만 읽어 새로운 무손실 피라미드 TIFF를 만듭니다."))
+        layout.addWidget(QLabel("WSI → TIFF  |  최대 해상도 영상 한 장과 기술 정보 CSV를 날짜·시간 폴더에 저장합니다."))
         notice = QLabel("원본 메타데이터·라벨·매크로는 내보내지 않습니다. 조직 영상 안에 적힌 개인정보는 별도 검토가 필요합니다.")
         notice.setObjectName("notice")
         notice.setWordWrap(True)
@@ -185,7 +186,7 @@ class Window(QMainWindow):
             self.output.setText(folder)
 
     def open_output(self):
-        folder = Path(self.output.text())
+        folder = getattr(self, "last_export_folder", Path(self.output.text()))
         if folder.is_dir():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder.resolve())))
         else:
@@ -198,6 +199,7 @@ class Window(QMainWindow):
             self.status.setText("출력 폴더를 선택하세요.")
             return
         self.action = action
+        self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f") if action == "copy" else None
         self.queue = list(range(len(self.paths)))
         self.stop_requested = False
         self.completed = 0
@@ -237,6 +239,7 @@ class Window(QMainWindow):
         self.process.start()
         job = {"source": str(self.paths[row]), "action": self.action,
                "output": self.output.text(), "pixels_reviewed": self.reviewed.isChecked(),
+               "run_id": self.run_id,
                "cancel_file": str(self.cancel_file)}
         self.process.write((json.dumps(job) + "\n").encode("utf-8"))
         self.process.closeWriteChannel()
@@ -277,6 +280,7 @@ class Window(QMainWindow):
             data = event["data"]
             self.results[row] = data
             if event["action"] == "copy":
+                self.last_export_folder = Path(data["directory"])
                 state = ("TIFF 완료 · 영상 확인됨" if data["report"]["pixel_review_asserted_by_caller"]
                          else "TIFF 완료 · 영상 검토 필요")
             else:
@@ -319,15 +323,17 @@ class Window(QMainWindow):
         report = data.get("report", data)
         if "report" in data:
             self.details.setPlainText("\n".join([
-                "형식: 무손실 피라미드 BigTIFF", f"영상 크기: {report['level_dimensions'][0]}",
-                f"영상 레벨: {len(report['level_dimensions'])}",
+                "형식: 최대 해상도 단일 영상 TIFF", f"영상 크기: {report['level_dimensions'][0]}",
+                "영상 수: 1장 (축소 피라미드 없음)",
                 "메타데이터·부속 이미지: 원본에서 복사하지 않음",
                 f"전체 타일 픽셀 일치 검증: {report['verified_tiles']:,}개 통과",
                 "영상 개인정보 검토: " + ("사용자가 확인함" if report["pixel_review_asserted_by_caller"] else "추가 검토 필요"),
                 "", "원본 ICC는 제외되므로 색상 관리 뷰어에서 표시가 달라질 수 있습니다.",
-                "", f"저장 위치: {data['directory']}"]))
+                "", f"저장 위치: {data['directory']}", "기술 정보: metadata.csv (원본 파일명·MPP·크기 등)"]))
             return
         slide = report.get("openslide", {})
+        if slide.get("thumbnail_skip_reason"):
+            self.preview.setText("대용량 단일 영상은 썸네일을 생략합니다.\n메모리 사용을 제한하기 위한 동작입니다.")
         lines = [f"영상 크기: {slide.get('dimensions', '-')}",
                  f"영상 레벨: {len(slide.get('level_dimensions', []))}",
                  f"부속 이미지: {', '.join(slide.get('associated_images', {})) or 'OpenSlide 목록 없음'}",

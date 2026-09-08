@@ -21,6 +21,16 @@ def load_openslide():
     return openslide, dll_handle
 
 
+def safe_thumbnail(slide, size):
+    """Avoid allocating the entire level-0 image for huge single-page TIFFs."""
+    scale = max(slide.dimensions[0] / size[0], slide.dimensions[1] / size[1])
+    level = slide.get_best_level_for_downsample(scale)
+    width, height = slide.level_dimensions[level]
+    if width * height > 40_000_000:
+        return None
+    return slide.get_thumbnail(size)
+
+
 def inspect(path: Path, sample_id: str, openslide) -> dict:
     result = {
         "sample_id": sample_id,
@@ -86,10 +96,14 @@ def inspect(path: Path, sample_id: str, openslide) -> dict:
                     result["openslide"]["decoded_regions"].append({
                         "level": level, "location": location, "size": size,
                     })
-            thumbnail = slide.get_thumbnail((256, 256))
-            thumbnail.load()
-            thumbnail.close()
-            result["openslide"]["thumbnail_decode_ok"] = True
+            thumbnail = safe_thumbnail(slide, (256, 256))
+            if thumbnail is None:
+                result["openslide"]["thumbnail_decode_ok"] = None
+                result["openslide"]["thumbnail_skip_reason"] = "Lowest available level exceeds preview memory budget"
+            else:
+                thumbnail.load()
+                thumbnail.close()
+                result["openslide"]["thumbnail_decode_ok"] = True
     except Exception as exc:
         result["errors"].append({"stage": "openslide_decode", "type": type(exc).__name__})
     return result

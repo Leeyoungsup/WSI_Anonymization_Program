@@ -1,10 +1,10 @@
-"""Standalone WSI -> clean pyramidal BigTIFF export (Python 3.10+).
+"""Standalone WSI -> single-image TIFF and technical CSV (Python 3.10+).
 
 Copy this file to another project. Dependencies:
-    pip install openslide-python openslide-bin numpy tifffile imagecodecs Pillow
+    pip install openslide-python "openslide-bin>=4.0.1.2" numpy tifffile imagecodecs Pillow
 
     from wsi_anonymizer import anonymize_wsi
-    result = anonymize_wsi('slide.ndpi', 'export/anonymous.tiff')
+    result = anonymize_wsi('slide.ndpi', 'output')
 
 Only decoded RGB pixels and optional numeric calibration cross into the output.
 All OpenSlide-readable formats use the SAME export path. This exports OpenSlide's
@@ -16,6 +16,8 @@ pixels_reviewed=True records a caller assertion, not an automated certification.
 from __future__ import annotations
 
 import argparse
+import csv
+from datetime import datetime
 import hashlib
 import importlib.util
 import json
@@ -31,6 +33,77 @@ import numpy as np
 import tifffile
 
 __all__ = ["anonymize_wsi", "ExportCancelled"]
+
+CSV_FIELDS = (
+    "original_filename", "output_filename", "source_format", "mpp_x_um", "mpp_y_um",
+    "width_px", "height_px", "objective_power", "source_level_count", "output_pages",
+    "source_size_bytes", "output_size_bytes", "compression", "exported_at",
+    "status", "verified_tiles", "pixel_review_asserted_by_caller",
+)
+
+
+def _numeric_property(slide, key):
+    try:
+        value = float(slide.properties[key])
+        return value if math.isfinite(value) and 0.000001 <= value <= 100000 else None
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def _run_folder(base, run_id):
+    base.mkdir(parents=True, exist_ok=True)
+    if run_id is not None:
+        if not isinstance(run_id, str) or len(run_id) != 22:
+            raise ValueError("run_id must be YYYYMMDD_HHMMSS_ffffff")
+        parsed = datetime.strptime(run_id, "%Y%m%d_%H%M%S_%f")
+        if parsed.strftime("%Y%m%d_%H%M%S_%f") != run_id:
+            raise ValueError("Invalid run_id")
+        folder = base / run_id
+        folder.mkdir(exist_ok=True)
+        return folder
+    while True:
+        folder = base / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        try:
+            folder.mkdir()
+            return folder
+        except FileExistsError:
+            continue
+
+
+def _record_csv(folder, row):
+    """Atomic manifest update. Concurrent writers fail instead of losing rows."""
+    manifest = folder / "metadata.csv"
+    lock = folder / ".metadata.lock"
+    fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    os.close(fd)
+    temporary = None
+    try:
+        rows = []
+        if manifest.exists():
+            with manifest.open("r", encoding="utf-8-sig", newline="") as stream:
+                reader = csv.DictReader(stream)
+                if reader.fieldnames != list(CSV_FIELDS):
+                    raise ValueError("Existing metadata.csv has an unexpected schema")
+                rows = list(reader)
+        # Prevent spreadsheet formulas in a filename; normal filenames are exact.
+        if row["original_filename"].lstrip().startswith(("=", "+", "-", "@")):
+            row = dict(row, original_filename="'" + row["original_filename"])
+        fd, name = tempfile.mkstemp(prefix=".csv_", suffix=".tmp", dir=folder)
+        temporary = Path(name)
+        with os.fdopen(fd, "w", encoding="utf-8-sig", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+            writer.writerow({field: row.get(field, "") for field in CSV_FIELDS})
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, manifest)
+        temporary = None
+        return manifest
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        lock.unlink(missing_ok=True)
 
 
 class ExportCancelled(Exception):
@@ -67,10 +140,8 @@ def _rectangles(rectangles, width, height):
     return result
 
 
-def _rgb_tile(slide, level, x, y, tile_size, boxes):
-    downsample = slide.level_downsamples[level]
-    location = (int(x * downsample), int(y * downsample))
-    with slide.read_region(location, level, (tile_size, tile_size)) as region:
+def _rgb_tile(slide, x, y, tile_size, boxes):
+    with slide.read_region((x, y), 0, (tile_size, tile_size)) as region:
         rgba = np.asarray(region)
         # Flatten transparency on white; never retain hidden transparent RGB.
         if np.all(rgba[:, :, 3] == 255):
@@ -79,18 +150,16 @@ def _rgb_tile(slide, level, x, y, tile_size, boxes):
             alpha = rgba[:, :, 3:4].astype(np.uint16)
             rgb = ((rgba[:, :, :3].astype(np.uint16) * alpha +
                     255 * (255 - alpha) + 127) // 255).astype(np.uint8)
-    width, height = slide.level_dimensions[level]
+    width, height = slide.dimensions
     if x + tile_size > width:
         rgb[:, max(0, width - x):] = 255
     if y + tile_size > height:
         rgb[max(0, height - y):, :] = 255
     for rx, ry, rw, rh in boxes:
-        # Dilate lower-level masks by one pixel to cover rounding at boundaries.
-        margin = 1 if level else 0
-        left = max(0, math.floor((rx - location[0]) / downsample) - margin)
-        top = max(0, math.floor((ry - location[1]) / downsample) - margin)
-        right = min(tile_size, math.ceil((rx + rw - location[0]) / downsample) + margin)
-        bottom = min(tile_size, math.ceil((ry + rh - location[1]) / downsample) + margin)
+        left = max(0, rx - x)
+        top = max(0, ry - y)
+        right = min(tile_size, rx + rw - x)
+        bottom = min(tile_size, ry + rh - y)
         if right > left and bottom > top:
             rgb[top:bottom, left:right] = 255
     return rgb
@@ -98,8 +167,9 @@ def _rgb_tile(slide, level, x, y, tile_size, boxes):
 
 def anonymize_wsi(
     input_path: str | Path,
-    output_path: str | Path | None = None,
+    output_dir: str | Path | None = None,
     *,
+    run_id: str | None = None,
     redactions: Sequence[Sequence[int]] = (),
     pixels_reviewed: bool = False,
     preserve_mpp: bool = True,
@@ -108,13 +178,13 @@ def anonymize_wsi(
     progress: Callable[[dict], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> dict:
-    """Export any locally OpenSlide-readable WSI as a new lossless tiled TIFF.
+    """Export only the highest-resolution image as a lossless single-page TIFF.
 
-    output_path: .tif/.tiff file, never overwritten; omitted -> random name beside
-        input. Choose a nonidentifying name if providing one yourself.
-    redactions: (x, y, width, height) in level-0 pixels, painted white at ALL levels.
-        Lower-resolution representations can smear text beyond a rectangle;
-        include a generous margin and review all resolutions.
+    output_dir: base directory; default is input's parent/output. A timestamp
+        subdirectory contains anonymous_<uuid>.tiff and metadata.csv.
+    run_id: YYYYMMDD_HHMMSS_ffffff timestamp; share between sequential calls to put
+        a batch in one directory/CSV. Omit to create a fresh run per call.
+    redactions: (x, y, width, height) in level-0 pixels, painted white.
     pixels_reviewed: caller confirms no identifiers remain outside supplied masks.
     preserve_mpp: copy only finite positive numeric microns-per-pixel calibration.
     progress: receives {stage, completed, total, percent}; no source identifiers.
@@ -129,17 +199,18 @@ def anonymize_wsi(
 
     Uses bounded tile buffers; final publication happens only after validation.
     The input must remain unchanged throughout export (including sidecar files).
-    Returns a JSON-serializable report. Does not write an ID mapping or sidecar.
+    Returns a JSON-serializable report and writes a UTF-8 BOM CSV with the original
+    filename and a fixed whitelist of technical fields. A filename can itself
+    contain identifiers; the caller explicitly requests this mapping. No patient
+    tags, scan dates, scanner IDs or free-text metadata are collected. Filenames
+    starting with spreadsheet formula characters are prefixed with an apostrophe.
     """
     source = Path(input_path).expanduser().resolve(strict=True)
     if not source.is_file():
         raise ValueError("Input must be a WSI file")
-    target = (Path(output_path).expanduser().resolve() if output_path is not None else
-              source.parent / ("anonymous_" + uuid.uuid4().hex + ".tiff"))
-    if target == source or target.exists():
-        raise FileExistsError("Output already exists or refers to the input")
-    if target.suffix.lower() not in {".tif", ".tiff"}:
-        raise ValueError("Output must end with .tif or .tiff")
+    base = Path(output_dir).expanduser().resolve() if output_dir is not None else source.parent / "output"
+    if base.exists() and not base.is_dir():
+        raise NotADirectoryError("output_dir must be a directory, not a TIFF filename")
     if not isinstance(tile_size, int) or tile_size < 128 or tile_size > 2048 or tile_size % 16:
         raise ValueError("tile_size must be a multiple of 16 between 128 and 2048")
     if not isinstance(workers, int) or not 1 <= workers <= 16:
@@ -160,26 +231,25 @@ def anonymize_wsi(
     try:
         stat_before = source.stat()
         with openslide.OpenSlide(str(source)) as slide:
-            dimensions = list(slide.level_dimensions)
-            downsamples = list(slide.level_downsamples)
+            dimensions = [slide.dimensions]
+            downsamples = [1.0]
+            source_level_count = slide.level_count
+            source_mpp = (_numeric_property(slide, "openslide.mpp-x"),
+                          _numeric_property(slide, "openslide.mpp-y"))
+            objective = _numeric_property(slide, "openslide.objective-power")
             if any(w <= 0 or h <= 0 for w, h in dimensions):
                 raise ValueError("Invalid image dimensions")
             if any(not math.isfinite(d) or d < 1 for d in downsamples):
                 raise ValueError("Invalid image pyramid")
             boxes = _rectangles(redactions, *dimensions[0])
             mpp = None
-            if preserve_mpp:
-                try:
-                    mx = float(slide.properties["openslide.mpp-x"])
-                    my = float(slide.properties["openslide.mpp-y"])
-                    if all(math.isfinite(v) and 0.000001 <= v <= 100000 for v in (mx, my)):
-                        mpp = (mx, my)
-                except (KeyError, ValueError, TypeError):
-                    pass
+            if preserve_mpp and all(v is not None for v in source_mpp):
+                mpp = source_mpp
             tiles_per_level = [math.ceil(w / tile_size) * math.ceil(h / tile_size)
                                for w, h in dimensions]
             total = sum(tiles_per_level)
-            target.parent.mkdir(parents=True, exist_ok=True)
+            folder = _run_folder(base, run_id)
+            target = folder / ("anonymous_" + uuid.uuid4().hex + ".tiff")
             # Deflate worst-case can approach raw size, including edge padding.
             required = int(total * tile_size * tile_size * 3 * 1.02) + 64 * 1024**2
             if shutil.disk_usage(target.parent).free < required:
@@ -201,7 +271,7 @@ def anonymize_wsi(
                             for x in range(0, width, tile_size):
                                 if cancelled is not None and cancelled():
                                     raise ExportCancelled("Export cancelled")
-                                rgb = _rgb_tile(slide, level, x, y, tile_size, boxes)
+                                rgb = _rgb_tile(slide, x, y, tile_size, boxes)
                                 digest.update(rgb.tobytes())
                                 yield rgb
                                 written += 1
@@ -239,7 +309,10 @@ def anonymize_wsi(
                         raise ValueError("Output image dimensions do not match")
                     digest = hashlib.sha256()
                     count = 0
-                    for data, _, _ in page.segments(maxworkers=workers, buffersize=32 * 1024**2):
+                    # Parallel segments() batches by COMPRESSED size; on blank
+                    # slides that can retain gigabytes of decoded futures.
+                    # Decode one tile at a time for a bounded memory footprint.
+                    for data, _, _ in page.segments(maxworkers=1, buffersize=8 * 1024**2):
                         if data is None:
                             raise ValueError("Missing output tile")
                         digest.update(data.tobytes())
@@ -251,7 +324,7 @@ def anonymize_wsi(
                         raise ValueError("Decoded output pixels do not match exported pixels")
             with openslide.OpenSlide(str(temporary)) as check:
                 if list(check.level_dimensions) != dimensions or check.associated_images:
-                    raise ValueError("Output pyramid readback failed")
+                    raise ValueError("Output single-image readback failed")
                 if check.properties.get("openslide.vendor") != "generic-tiff":
                     raise ValueError("Output is not a generic tiled TIFF")
                 with check.read_region((0, 0), 0, (64, 64)) as region:
@@ -268,8 +341,8 @@ def anonymize_wsi(
                 os.link(temporary, target)
                 temporary.unlink()
             temporary = None
-            return {
-                "output_path": str(target), "format": "pyramidal-bigtiff",
+            result = {
+                "output_path": str(target), "directory": str(folder), "format": "single-page-bigtiff",
                 "status": "metadata_clean_pixels_reviewed" if pixels_reviewed else "metadata_clean_pixel_review_required",
                 "metadata_clean": True, "pixel_review_asserted_by_caller": pixels_reviewed,
                 "redaction_count": len(boxes), "level_dimensions": [list(d) for d in dimensions],
@@ -280,6 +353,22 @@ def anonymize_wsi(
                 "representation": "OpenSlide 2D RGB; not all focal planes/channels",
                 "size_bytes": target.stat().st_size,
             }
+            row = {
+                "original_filename": source.name, "output_filename": target.name,
+                "source_format": source.suffix.lower(), "mpp_x_um": source_mpp[0], "mpp_y_um": source_mpp[1],
+                "width_px": dimensions[0][0], "height_px": dimensions[0][1],
+                "objective_power": objective, "source_level_count": source_level_count, "output_pages": 1,
+                "source_size_bytes": stat_before.st_size, "output_size_bytes": result["size_bytes"],
+                "compression": result["compression"], "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "status": result["status"], "verified_tiles": verified,
+                "pixel_review_asserted_by_caller": pixels_reviewed,
+            }
+            try:
+                result["csv_path"] = str(_record_csv(folder, row))
+            except Exception:
+                target.unlink()  # This call's newly created file only.
+                raise
+            return result
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

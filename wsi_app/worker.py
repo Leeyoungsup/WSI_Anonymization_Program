@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from tools.inspect_samples import inspect, load_openslide
+from tools.inspect_samples import inspect, load_openslide, safe_thumbnail
 from wsi_app.engine import create_anonymized_tiff
 from wsi_anonymizer import ExportCancelled
 
@@ -26,7 +26,7 @@ def main():
                 stage = "TIFF 저장" if event["stage"] == "write" else "전체 타일 검증"
                 emit("progress", message=f"{stage} · {event['percent']}%", percent=event["percent"])
             result = create_anonymized_tiff(
-                path, Path(job["output"]), pixels_reviewed=job.get("pixels_reviewed", False),
+                path, Path(job["output"]), run_id=job.get("run_id"), pixels_reviewed=job.get("pixels_reviewed", False),
                 progress=progress, cancelled=lambda: Path(job["cancel_file"]).exists())
             emit("result", action="copy", data=result)
         else:
@@ -35,10 +35,12 @@ def main():
             preview = None
             if not result["errors"]:
                 with openslide.OpenSlide(str(path)) as slide:
-                    with slide.get_thumbnail((700, 480)) as thumbnail:
+                    thumbnail = safe_thumbnail(slide, (700, 480))
+                    if thumbnail is not None:
                         buffer = io.BytesIO()
                         thumbnail.save(buffer, format="PNG")
                         preview = base64.b64encode(buffer.getvalue()).decode("ascii")
+                        thumbnail.close()
             emit("result", action="inspect", data=result, preview=preview)
         return 0
     except ExportCancelled:
