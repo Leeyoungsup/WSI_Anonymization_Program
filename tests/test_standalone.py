@@ -13,7 +13,9 @@ import numpy as np
 import tifffile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from wsi_anonymizer import anonymize_wsi, ExportCancelled
+from wsi_anonymizer import anonymize_wsi as export_wsi, ExportCancelled
+from functools import partial
+anonymize_wsi = partial(export_wsi, compression="lossless")
 
 
 class StandaloneTests(unittest.TestCase):
@@ -83,7 +85,7 @@ class StandaloneTests(unittest.TestCase):
         module = self.root / "wsi_anonymizer.py"
         shutil.copyfile(Path(__file__).resolve().parents[1] / module.name, module)
         target = self.root / "portable"
-        completed = subprocess.run([sys.executable, "-I", str(module), str(self.source), str(target)],
+        completed = subprocess.run([sys.executable, "-I", str(module), str(self.source), str(target), "--compression", "lossless"],
                                    cwd=self.root, capture_output=True, text=True, timeout=60)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(len(list(target.rglob("*.tiff"))), 1)
@@ -156,6 +158,22 @@ class StandaloneTests(unittest.TestCase):
                 raise AssertionError("Must not allocate a huge level-0 image")
 
         self.assertIsNone(safe_thumbnail(LargeSlide(), (700, 480)))
+
+    def test_open_csv_gets_complete_snapshot_without_lost_rows(self):
+        output = self.root / "output"
+        run = "20260908_120000_000001"
+        first = anonymize_wsi(self.source, output, run_id=run)
+        with patch("wsi_anonymizer.os.replace", side_effect=PermissionError("Excel lock")):
+            second = anonymize_wsi(self.source, output, run_id=run)
+        self.assertNotEqual(first["csv_path"], second["csv_path"])
+        self.assertTrue(Path(second["output_path"]).is_file())
+        with Path(second["csv_path"]).open(encoding="utf-8-sig", newline="") as stream:
+            self.assertEqual(len(list(csv.DictReader(stream))), 2)
+        third = anonymize_wsi(self.source, output, run_id=run)
+        with Path(third["csv_path"]).open(encoding="utf-8-sig", newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(len({r["output_filename"] for r in rows}), 3)
 
 
 if __name__ == "__main__":

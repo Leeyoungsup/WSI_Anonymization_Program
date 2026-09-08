@@ -1,6 +1,6 @@
 # WSI Anonymization Program
 
-WSI의 **최대 해상도 영상 한 장만** 무손실 TIFF로 저장합니다. 축소 피라미드와 추가 페이지는 만들지 않습니다. 실행 날짜·시간 폴더에 TIFF와 원본 파일명/기술 정보를 담은 CSV를 함께 저장합니다.
+WSI의 **최대 해상도 영상 한 장만**, **원본 JPEG 압축 데이터를 유지해 재압축 없이 TIFF로 저장**합니다. 축소 피라미드와 추가 페이지는 만들지 않습니다. 실행 날짜·시간 폴더에 TIFF와 원본 파일명/기술 정보를 담은 CSV를 함께 저장합니다.
 
 ```text
 output/
@@ -40,7 +40,11 @@ for source in ["input/slide.svs", "input/slide.ndpi"]:
     anonymize_wsi(source, "output", run_id=run_id)
 ```
 
-입력은 설치된 OpenSlide가 읽을 수 있는 형식에 따릅니다. SVS·NDPI와 일반 TIFF를 테스트합니다. 다채널/다중 초점면의 모든 데이터를 보존하는 변환은 아니며 OpenSlide의 2D RGB level 0을 출력합니다.
+기본값은 `compression="preserve"`입니다. 독립된 baseline YCbCr JPEG 타일을 가진 SVS/TIFF와, 지원되는 JPEG restart 구조의 NDPI를 처리합니다. 샘플 SVS·NDPI 모두 재압축 없이 검증했습니다. 지원하지 않는 압축·구조는 오류를 반환하며 자동으로 재압축하지 않습니다. 다채널·다중 초점면 전체를 보존하는 변환은 아니며 최대 해상도 level 0만 출력합니다.
+
+SVS는 기존 JPEG 타일을 옮깁니다. NDPI는 TIFF 규격에 맞게 독립된 restart 구간을 세로로 묶고 JPEG 크기·restart 번호를 수정합니다. 압축 영상 데이터와 양자화 테이블은 유지하며 JPEG 인코더는 호출하지 않습니다. 현재 NDPI 보존 경로는 1×1 색상 샘플링과 완전한 restart 행, 호환되는 영상 크기를 요구합니다. 헤더가 추가되므로 출력이 항상 원본보다 작다는 보장은 없습니다.
+
+다른 OpenSlide 지원 형식이나 픽셀 마스킹이 필요하면 `compression="lossless"`를 명시해 기존 RGB/Deflate 방식을 사용할 수 있습니다. 이 경우 파일 크기가 크게 늘 수 있습니다. GUI의 기본 내보내기는 원본 압축 유지 방식입니다.
 
 ## CSV 항목
 
@@ -62,6 +66,8 @@ for source in ["input/slide.svs", "input/slide.ndpi"]:
 
 검증에 성공한 파일만 CSV 행을 추가합니다. 기존 CSV를 임시 파일로 재작성한 뒤 교체하며, CSV 저장 실패 시 해당 호출이 새로 만든 TIFF를 정리합니다. 같은 `run_id`에 대한 동시 쓰기는 지원하지 않으므로 순차 호출하세요. CSV 잠금 충돌은 데이터 손실 없이 오류로 처리합니다.
 
+Excel 등에서 `metadata.csv`를 열어 교체가 막힌 경우, 전체 행을 담은 `metadata_<저장 시각>.csv`를 새로 저장합니다. 반환값 `csv_path`와 GUI 상세 정보가 최신 CSV를 가리킵니다. 이후 호출은 기존 CSV와 스냅샷의 행을 출력 파일명 기준으로 합쳐 이전 성공 파일을 빠뜨리지 않습니다.
+
 ## Windows 프로그램
 
 **`Launch_WSI.vbs`를 더블클릭**하거나 다음 명령으로 실행합니다.
@@ -78,22 +84,25 @@ conda run --no-capture-output -n yslee python app.py
 ## 영상 처리와 검증
 
 - 타일로 나누어 읽고 저장해 전체 WSI를 메모리에 올리지 않습니다. 타일은 내부 저장 단위이며 출력 영상/페이지는 1개입니다.
-- 4GB 초과 출력을 지원하기 위해 BigTIFF를 사용하며 Deflate 무손실 압축을 적용합니다.
-- 원본 메타데이터·라벨·매크로·썸네일·ICC·전용 태그·압축 바이트·미참조 영역은 TIFF에 복사하지 않습니다. 숫자 MPP만 TIFF 해상도로 기록할 수 있습니다.
-- 모든 출력 타일의 픽셀 해시를 검증하고, TIFF에 영상 1개만 있는지와 허용된 구조 태그만 남았는지 검사합니다.
+- 4GB 초과 출력을 지원하는 BigTIFF를 사용하며 기본 모드에서는 원본 JPEG 압축 데이터를 유지합니다.
+- 원본 설명·라벨·매크로·썸네일·ICC·전용 태그·미참조 파일 영역은 복사하지 않습니다. JPEG 내부의 APP/COM 부가정보도 제거합니다. 압축 영상 데이터와 필요한 코딩 테이블, 숫자 MPP는 보존합니다.
+- 모든 출력 압축 타일의 SHA-256을 기록 시점과 비교하고 모든 타일을 디코딩합니다. OpenSlide로 원본과 출력의 25개 영역 픽셀을 비교하며, 단일 영상·허용된 구조 태그만 남았는지 검사합니다.
 - 원본 파일은 보존하며 취소/실패 시 임시 TIFF를 정리합니다. 실패한 실행의 빈 날짜 폴더는 남을 수 있습니다.
 
-영상에 직접 적힌 개인정보는 별도 검토 대상입니다. `redactions=[(x, y, 폭, 높이)]`로 level 0 좌표 영역을 흰색으로 가릴 수 있습니다. `pixels_reviewed=True`는 사용자가 남은 영상을 검토했다는 확인이며 자동 인증이 아닙니다. 자세한 정책은 [처리 정책](docs/processing_policy.md)을 참고하세요.
+영상에 직접 적힌 개인정보는 별도 검토 대상입니다. 압축 유지 모드는 원본 픽셀과 타일 가장자리 패딩도 유지합니다. `compression="lossless", redactions=[(x, y, 폭, 높이)]`를 명시하면 level 0 좌표 영역을 흰색으로 가릴 수 있습니다. `pixels_reviewed=True`는 사용자가 남은 영상을 검토했다는 확인이며 자동 인증이 아닙니다. 자세한 정책은 [처리 정책](docs/processing_policy.md)을 참고하세요.
 
 ## 테스트
 
+실제 두 샘플의 최신 결과는 [원본 압축 유지 TIFF 검증 기록](docs/preserved_tiff_validation.md)에 정리했습니다. 이전 [Deflate 단일 TIFF 기록](docs/single_tiff_validation.md)은 과거 버전의 결과입니다.
+
 ```powershell
 conda run --no-capture-output -n yslee python tests/test_standalone.py
+conda run --no-capture-output -n yslee python tests/test_preserved.py
 conda run --no-capture-output -n yslee python tests/smoke_gui.py
 conda run --no-capture-output -n yslee python tests/integration_tiff.py
 ```
 
-마지막 명령은 실제 샘플 전체를 처리하므로 시간이 걸립니다. 출력은 `output/<실행 시각>/`, 검증 기록은 `artifacts/single_tiff_validation.json`에 저장합니다. 과거 `output/clean_tiff/`의 피라미드 출력은 이전 버전 결과입니다.
+마지막 명령은 실제 샘플 전체를 처리하므로 시간이 걸립니다. 출력은 `output/<실행 시각>/`, 검증 기록은 `artifacts/preserved_tiff_validation.json`에 저장합니다. 과거 `output/clean_tiff/`의 피라미드 출력은 이전 버전 결과입니다.
 
 명령행에서도 입력 파일과 출력 **폴더**를 지정합니다.
 

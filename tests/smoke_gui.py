@@ -57,7 +57,7 @@ def main():
         source_folder.mkdir()
         sample = source_folder / "synthetic.tif"
         tifffile.imwrite(sample, np.full((320, 530, 3), 160, dtype=np.uint8),
-                         tile=(128, 128), photometric="rgb", description="PRIVATE_SENTINEL")
+                         tile=(128, 128), photometric="rgb", compression="jpeg", description="PRIVATE_SENTINEL")
         window.clear_button.click()
         other = source_folder / "second.tif"
         shutil.copyfile(sample, other)

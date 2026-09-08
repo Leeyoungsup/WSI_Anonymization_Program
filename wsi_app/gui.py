@@ -50,7 +50,7 @@ class Window(QMainWindow):
         title = QLabel("WSI Anonymization")
         title.setObjectName("title")
         layout.addWidget(title)
-        layout.addWidget(QLabel("WSI → TIFF  |  최대 해상도 영상 한 장과 기술 정보 CSV를 날짜·시간 폴더에 저장합니다."))
+        layout.addWidget(QLabel("WSI → TIFF  |  원본 JPEG 압축 유지 · 최대 해상도 한 장 · 날짜·시간 폴더와 CSV"))
         notice = QLabel("원본 메타데이터·라벨·매크로는 내보내지 않습니다. 조직 영상 안에 적힌 개인정보는 별도 검토가 필요합니다.")
         notice.setObjectName("notice")
         notice.setWordWrap(True)
@@ -329,7 +329,8 @@ class Window(QMainWindow):
                 f"전체 타일 픽셀 일치 검증: {report['verified_tiles']:,}개 통과",
                 "영상 개인정보 검토: " + ("사용자가 확인함" if report["pixel_review_asserted_by_caller"] else "추가 검토 필요"),
                 "", "원본 ICC는 제외되므로 색상 관리 뷰어에서 표시가 달라질 수 있습니다.",
-                "", f"저장 위치: {data['directory']}", "기술 정보: metadata.csv (원본 파일명·MPP·크기 등)"]))
+                "", f"저장 위치: {data['directory']}",
+                f"기술 정보: {Path(data['csv_path']).name} (원본 파일명·MPP·크기 등)"]))
             return
         slide = report.get("openslide", {})
         if slide.get("thumbnail_skip_reason"):
