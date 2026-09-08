@@ -10,6 +10,7 @@ import tempfile
 import numpy as np
 import tifffile
 import openslide
+from PIL import ImageCms
 
 ROOT = Path(__file__).resolve().parents[1]
 exe = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "dist" / "WSI_Anonymization.exe"
@@ -22,10 +23,11 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     source = folder / "input" / "synthetic.tiff"
     source.parent.mkdir()
     pixels = np.random.default_rng(8).integers(0, 256, (1024, 2048, 3), dtype=np.uint8)
+    icc = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
     with tifffile.TiffWriter(source) as writer:
         for index, array in enumerate((pixels, pixels[::2, ::2])):
             writer.write(array, compression="jpeg", tile=(128,128), photometric="rgb",
-                         subfiletype=index, metadata=None,
+                         subfiletype=index, metadata=None, iccprofile=icc,
                          resolution=(40000, 20000), resolutionunit="CENTIMETER",
                          description=json.dumps({"schema": "wsi-technical-v1", "objective_power": 40,
                                                  "patient": "PATIENT_SENTINEL"}))
@@ -65,6 +67,11 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     np.testing.assert_array_equal(tifffile.imread(source), tifffile.imread(preserved["file"]))
     lossless = run(compression="lossless", export_csv=False)["data"]
     named = run(rename_output=False)["data"]
+    colored = run(preserve_icc=True)["data"]
+    assert colored["report"]["icc_profile_copied"] and not colored["report"]["metadata_clean"]
+    with openslide.OpenSlide(colored["file"]) as slide:
+        with slide.read_region((0, 0), 0, (32, 32)) as region:
+            assert region.info["icc_profile"] == icc
     assert Path(named["file"]).name == "synthetic.tiff"
     assert lossless["csv_path"] is None
     assert lossless["report"]["compression"] == "deflate-lossless"

@@ -4,7 +4,13 @@ SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도�
 
 ## Windows EXE
 
-`release/WSI_Anonymization-1.2.0-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
+1.3.0: 원본 Vendor를 TIFF 기술 JSON·CSV·정보 화면에 표시합니다. OpenSlide가 확인한 형식 벤더의 허용 목록만 사용하며 제조사 자유 텍스트·장비 일련번호는 복사하지 않습니다. NDPI의 원본 Vendor는 hamamatsu이고 출력의 `openslide.vendor`는 호환 형식인 aperio입니다. 이 버전으로 만든 결과를 재변환해도 원본 Vendor를 유지합니다. 이전 출력에 원본 Vendor 정보가 없으면 원래 제조사를 복원할 수 없습니다.
+
+**원본 ICC 포함** 체크박스는 기본 해제입니다. 체크하면 원본 RGB ICC를 기본 TIFF 페이지에 그대로 복사하며 픽셀 색상 변환·재압축은 하지 않습니다. OpenSlide의 `slide.color_profile` 또는 `read_region(...).info['icc_profile']`로 읽을 수 있습니다. ICC가 없는 원본에는 새 프로파일을 만들지 않습니다. API는 `preserve_icc=True`, CLI는 `--preserve-icc`입니다.
+
+ICC에는 색상 정보 외의 설명·제조사 등 부가정보가 있을 수 있습니다. 그대로 복사하므로 포함한 결과는 `icc_review_required=True`, `metadata_clean=False` 및 ICC 검토 필요 상태로 기록합니다. ICC 내용을 자동 익명화했다고 주장하지 않습니다. 기존 TIFF 개인정보 태그·라벨·매크로 제거는 유지합니다. CSV에 `source_vendor`, `icc_profile_copied`, `icc_review_required`가 추가됩니다.
+
+`release/WSI_Anonymization-1.3.0-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
 
 **출력 파일명을 익명 이름으로 변경**은 기본 체크입니다. 해제하면 원본 이름에 `.tiff` 확장자를 붙이며 중복 이름은 `_2`, `_3` 등을 붙입니다. 기존 파일은 덮어쓰지 않습니다. 원본 파일명에 식별자가 있으면 결과 파일명에도 남습니다. CSV의 원본 파일명 포함 옵션과는 독립적입니다. API에서는 `rename_output=False`, CLI에서는 `--keep-filename`을 사용합니다.
 

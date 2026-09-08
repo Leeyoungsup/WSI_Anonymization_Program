@@ -39,6 +39,7 @@ with tempfile.TemporaryDirectory(dir=ROOT / "artifacts") as folder:
     w.output.setText(str(root / "out"))
     w.export_image.setChecked(False)
     assert not w.rename_output.isEnabled()
+    assert not w.preserve_icc.isEnabled() and not w.preserve_icc.isChecked()
     w.export_csv.setChecked(False)
     assert not w.copy_button.isEnabled()
     w.start("copy")
@@ -59,6 +60,9 @@ with tempfile.TemporaryDirectory(dir=ROOT / "artifacts") as folder:
     assert all(label in w.details.toPlainText() for label in ("Magnification:", "Pixel Size:", "MPP:", "Physical Size:"))
     w.export_image.setChecked(True)
     assert w.rename_output.isEnabled() and w.rename_output.isChecked()
+    assert w.preserve_icc.isEnabled()
+    w.preserve_icc.setChecked(True)
+    assert w.export_options()["preserve_icc"] is True
     w.rename_output.setChecked(False)
     w.export_csv.setChecked(False)
     w.preserve_mpp.setChecked(False)

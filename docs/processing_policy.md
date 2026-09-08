@@ -1,5 +1,7 @@
 # 원본 압축 유지 피라미드 TIFF + CSV 정책 v7
 
+1.3.0 추가: source_vendor는 OpenSlide 형식 벤더 허용 목록의 값만 저장하며 재변환 시 보존합니다. preserve_icc=False가 기본입니다. 명시적으로 활성화한 경우 원본 RGB ICC(최대 64 MiB)를 기본 페이지에 복사합니다. TIFF 바이트와 OpenSlide ICC 읽기를 비교 검증합니다. 프로파일 내부 부가정보를 지우지 않으므로 metadata_clean=False, icc_review_required=True로 표시합니다. 아래 ICC 제외 정책의 명시적 예외이며 ICC 자체는 익명화 검증 대상에서 제외됩니다.
+
 OpenSlide 배율 직접 읽기를 위해 기본 페이지 설명을 Aperio 호환 형식으로 작성합니다. 고정 호환 표기 + 숫자 AppMag + 해당되는 경우 단일 MPP + WSI_Technical JSON만 허용합니다. 원본 스캐너를 Aperio로 주장하는 것이 아니라 출력 판독 형식을 선택하는 것입니다. OpenSlide vendor=aperio 및 objective-power 직접 읽기를 최종 검증합니다. X/Y MPP가 다르면 단일 MPP 필드를 쓰지 않고 정확한 두 값을 표준 TIFF 해상도 태그와 기술 JSON·CSV에 보존합니다. OpenSlide Aperio 백엔드는 비등방성 MPP를 지원하지 않으므로 해당 경우 OpenSlide MPP 키는 없습니다.
 
 기술 정보 허용 목록: 원본 대물렌즈 배율, 전체 영상 픽셀 수, X/Y MPP, MPP로 계산한 전체 영상 영역 크기(mm). 기본 페이지 ImageDescription에는 이 숫자와 고정 스키마 식별자만 새로 작성하며 원본 설명문을 복사하지 않습니다. 출력 설명문은 생성한 내용과 정확히 일치하는지 검증합니다. 축소 페이지는 문자열 태그를 허용하지 않습니다. 원본에 없는 배율·MPP는 추정하지 않습니다. MPP 저장을 해제하면 TIFF의 MPP·Physical Size는 null입니다. CSV는 원본 기술 정보를 유지합니다.

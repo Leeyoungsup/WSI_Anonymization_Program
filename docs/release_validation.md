@@ -1,6 +1,6 @@
-# Windows EXE 1.2.0 검증
+# Windows EXE 1.3.0 검증
 
-배포 ZIP: `release/WSI_Anonymization-1.2.0-Windows-x64.zip`.
+배포 ZIP: `release/WSI_Anonymization-1.3.0-Windows-x64.zip`.
 
 1.2.0은 Aperio 호환 설명으로 저장하여 별도의 OpenSlide 수정 없이 `openslide.objective-power`를 직접 제공합니다. 배율 숫자와 고정 호환 표기, 기술 JSON만 생성하며 원본 설명은 복사하지 않습니다. 합성 피라미드 테스트 7개에서 직접 배율 키, 등방성 MPP 키, 비등방성 MPP의 정확한 기술 정보 재읽기, 개인정보 표식 제거, 원본 압축·픽셀 보존, 마스크·취소를 검증했습니다. 비등방성 MPP는 OpenSlide 키를 생략하고 TIFF 표준 해상도 및 기술 JSON·CSV에 유지합니다. 1.1.2의 None 관찰 기록은 이전 출력에 해당합니다.
 
@@ -11,6 +11,8 @@
 기본 구조를 표준 피라미드 TIFF로 변경했습니다. 최대 해상도와 호환 원본 조직 축소 레벨의 JPEG 압축을 유지하고 필요한 작은 레벨만 추가 생성합니다. GUI에서 단일 해상도 TIFF도 선택할 수 있습니다. 모든 레벨에 개인정보 메타데이터 제거를 적용하며 영상에 직접 적힌 식별자는 사용자 검토 대상입니다.
 
 ## 검증
+
+1.3.0: 원본 Vendor 재변환 보존과 임의 문자열 거부, JPEG/Deflate 각각의 ICC 포함·제외, 원본 프로파일 바이트와 OpenSlide 썸네일 ICC 일치, 원본 ICC가 없는 경우, ICC 별도 검토 상태·CSV를 테스트했습니다. 기존 standalone 11개, 압축 유지 6개, 피라미드 7개와 ICC 전용 2개가 검증 범위입니다. 원본 포함 ICC는 개인정보 제거 완료로 판정하지 않습니다.
 
 1.2.0 실제 결과: `output/20260909_073622_242147/`. SVS·NDPI 모두 5개 레벨, 원본 압축 유지 및 원본 SHA-256 보존을 통과했습니다. 프로젝트 모듈을 가져오지 않는 별도 Python 프로세스에서 표준 OpenSlide만으로 두 파일의 `openslide.objective-power == '40'`, vendor=aperio, get_thumbnail을 확인했습니다. SVS의 MPP 키는 약 0.262583이고 NDPI의 서로 다른 X/Y MPP는 기술 JSON·TIFF 표준 해상도·CSV에 유지합니다. 최종 EXE에서도 표준 OpenSlide 배율 키와 파일명 옵션, GUI 연결을 검증했습니다.
 

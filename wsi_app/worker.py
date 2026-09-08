@@ -28,7 +28,7 @@ def main():
             result = create_anonymized_tiff(
                 path, Path(job["output"]), run_id=job.get("run_id"), pixels_reviewed=job.get("pixels_reviewed", False),
                 progress=progress, cancelled=lambda: Path(job["cancel_file"]).exists(),
-                **{key: job[key] for key in ("export_image", "export_csv", "include_filename", "rename_output", "preserve_mpp", "compression", "pyramid") if key in job})
+                **{key: job[key] for key in ("export_image", "export_csv", "include_filename", "rename_output", "preserve_mpp", "preserve_icc", "compression", "pyramid") if key in job})
             emit("result", action="copy", data=result)
         else:
             emit("progress", message="구조 검사 및 영상 읽기")

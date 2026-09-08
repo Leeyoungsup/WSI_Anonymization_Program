@@ -46,6 +46,7 @@ CSV_FIELDS = (
     "source_size_bytes", "output_size_bytes", "compression", "exported_at",
     "status", "verified_tiles", "pixel_review_asserted_by_caller",
     "physical_width_mm", "physical_height_mm",
+    "source_vendor", "icc_profile_copied", "icc_review_required",
 )
 
 
@@ -100,17 +101,27 @@ def _objective_power(slide):
     return None
 
 
-def _technical_metadata(dimensions, mpp, objective):
+def _source_vendor(slide):
+    allowed = {"aperio", "hamamatsu", "leica", "mirax", "philips", "sakura", "trestle",
+               "ventana", "zeiss", "dicom", "generic-tiff", "synthetic", "argos", "huron"}
+    stored = _read_technical_description(slide.properties.get("tiff.ImageDescription", "")).get("source_vendor")
+    if isinstance(stored, str) and stored in allowed:
+        return stored
+    vendor = slide.properties.get("openslide.vendor")
+    return vendor if vendor in allowed else None
+
+
+def _technical_metadata(dimensions, mpp, objective, source_vendor=None):
     width, height = dimensions
     x, y = mpp if mpp is not None else (None, None)
-    return {"schema": "wsi-technical-v1", "objective_power": objective,
+    return {"schema": "wsi-technical-v1", "objective_power": objective, "source_vendor": source_vendor,
             "width_px": width, "height_px": height, "mpp_x_um": x, "mpp_y_um": y,
             "physical_width_mm": width * x / 1000 if x is not None else None,
             "physical_height_mm": height * y / 1000 if y is not None else None}
 
 
-def _validate_metadata(page, allowed, description=None):
-    permitted = allowed | ({270} if description is not None else set())
+def _validate_metadata(page, allowed, description=None, icc=None):
+    permitted = allowed | ({270} if description is not None else set()) | ({34675} if icc else set())
     if set(page.tags.keys()) - permitted:
         raise ValueError("Unexpected output metadata")
     for tag in page.tags.values():
@@ -118,6 +129,8 @@ def _validate_metadata(page, allowed, description=None):
             raise ValueError("Unexpected text metadata")
     if description is not None and page.description != description:
         raise ValueError("Technical metadata was not retained")
+    if icc and (34675 not in page.tags or page.tags[34675].value != icc):
+        raise ValueError("ICC profile verification failed")
 
 
 def _run_folder(base, run_id):
@@ -308,7 +321,7 @@ def _jpeg_entropy(data, *, restart_segment=False):
         raise ValueError("Unsupported marker inside JPEG scan")
 
 
-def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, append=False, description=None):
+def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, append=False, description=None, icc=None):
     """Repackage JPEG coding data, never invoke an encoder.
 
     tifffile exposes NDPI restart segments as virtual MCU-row tiles. Group
@@ -413,7 +426,7 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, appen
         with tifffile.TiffWriter(target, bigtiff=True, append=append) as writer:
             writer.write(tiles(), shape=(height, width, 3), dtype=np.uint8,
                          tile=(th * group, tw), photometric="ycbcr", compression="jpeg",
-                         subsampling=subsampling, metadata=None, description=description,
+                         subsampling=subsampling, metadata=None, description=description, iccprofile=icc,
                          software=False, datetime=False, subfiletype=1 if append else 0,
                          resolution=None if mpp is None else (10000 / mpp[0], 10000 / mpp[1]),
                          resolutionunit="CENTIMETER" if mpp else "NONE")
@@ -426,7 +439,7 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, appen
         page = output.pages[-1] if append else output.pages[0]
         allowed = {254, 256, 257, 258, 259, 262, 277, 282, 283, 284, 296,
                    322, 323, 324, 325, 530, 532}
-        _validate_metadata(page, allowed, description)
+        _validate_metadata(page, allowed, description, icc)
         if page.shape != (height, width, 3) or len(page.dataoffsets) != total or not page.is_tiled:
             raise ValueError("Output dimensions/tile count changed")
         for i, (offset, count) in enumerate(zip(page.dataoffsets, page.databytecounts)):
@@ -518,7 +531,7 @@ def _append_overview(target, openslide, mpp, compression, notify):
     return (width, height), total
 
 
-def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, description=None):
+def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, description=None, icc=None):
     """Reuse only recognized tissue levels; never copy label/macro/thumbnail IFDs."""
     dimensions = [slide.dimensions]
     candidates = []
@@ -568,7 +581,7 @@ def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, de
         if len(tif.pages) != len(dimensions):
             raise ValueError("Unexpected pyramid page count")
         for index, page in enumerate(tif.pages):
-            _validate_metadata(page, allowed, description if index == 0 else None)
+            _validate_metadata(page, allowed, description if index == 0 else None, icc if index == 0 else None)
             if (not page.is_tiled or page.subifds or page.subfiletype != (1 if index else 0)
                     or (page.imagewidth, page.imagelength) != dimensions[index]):
                 raise ValueError("Invalid pyramid structure or unexpected metadata")
@@ -590,6 +603,7 @@ def anonymize_wsi(
     redactions: Sequence[Sequence[int]] = (),
     pixels_reviewed: bool = False,
     preserve_mpp: bool = True,
+    preserve_icc: bool = False,
     tile_size: int = 512,
     workers: int = 4,
     progress: Callable[[dict], None] | None = None,
@@ -619,6 +633,9 @@ def anonymize_wsi(
     redactions: (x, y, width, height), painted white; requires 'lossless' mode.
     pixels_reviewed: caller confirms no identifiers remain outside supplied masks.
     preserve_mpp: copy only finite positive numeric microns-per-pixel calibration.
+    preserve_icc: copy the original RGB ICC profile including its metadata.
+        Defaults to False. If copied, metadata_clean=False and the report/CSV
+        explicitly require separate ICC metadata review. Pixels are not transformed.
     tile_size, workers: control the explicit 'lossless' path only; preserve mode
         retains source coding geometry (apart from NDPI restart regrouping).
     progress: receives {stage, completed, total, percent}; no source identifiers.
@@ -630,7 +647,8 @@ def anonymize_wsi(
     every tile. Also compares source/output pixels in 25 regions with OpenSlide.
     Source padding pixels are retained; masks require explicit lossless mode.
     Lossless mode verifies every decoded tile against the supplied RGB pixels.
-    Both exclude ICC, descriptions, associated images and unreferenced file data.
+    Both exclude source descriptions, associated images and unreferenced file data.
+    ICC is excluded unless preserve_icc=True; this is an explicit review exception.
     Removing ICC can change color-managed appearance. Pixel review is a caller
     assertion, not an automated anonymity certification.
 
@@ -643,7 +661,7 @@ def anonymize_wsi(
     starting with spreadsheet formula characters are prefixed with an apostrophe.
     """
     source = Path(input_path).expanduser().resolve(strict=True)
-    if not all(isinstance(v, bool) for v in (export_image, export_csv, include_filename, rename_output, pyramid)):
+    if not all(isinstance(v, bool) for v in (export_image, export_csv, include_filename, rename_output, pyramid, preserve_icc)):
         raise TypeError("Export options must be boolean")
     if not export_image and not export_csv:
         raise ValueError("Select TIFF image or CSV information to export")
@@ -697,9 +715,23 @@ def anonymize_wsi(
             mpp = None
             if preserve_mpp and all(v is not None for v in source_mpp):
                 mpp = source_mpp
-            technical = _technical_metadata(dimensions[0], mpp, objective)
-            source_technical = _technical_metadata(dimensions[0], source_mpp, objective)
+            source_vendor = _source_vendor(slide)
+            technical = _technical_metadata(dimensions[0], mpp, objective, source_vendor)
+            source_technical = _technical_metadata(dimensions[0], source_mpp, objective, source_vendor)
             physical = {key: source_technical[key] for key in ("physical_width_mm", "physical_height_mm")}
+            icc = None
+            if preserve_icc and export_image:
+                with slide.read_region((0, 0), 0, (1, 1)) as region:
+                    icc = region.info.get("icc_profile")
+                if icc:
+                    from io import BytesIO
+                    from PIL import ImageCms
+                    if len(icc) > 64 * 1024 * 1024:
+                        raise ValueError("ICC profile exceeds 64 MiB limit")
+                    profile = ImageCms.ImageCmsProfile(BytesIO(icc))
+                    if profile.profile.xcolor_space.strip() != "RGB":
+                        raise ValueError("Only RGB ICC profiles can accompany RGB output")
+            physical.update(source_vendor=source_vendor, icc_profile_copied=bool(icc), icc_review_required=bool(icc))
             description = _technical_description(technical)
             tiles_per_level = [math.ceil(w / tile_size) * math.ceil(h / tile_size)
                                for w, h in dimensions]
@@ -738,7 +770,7 @@ def anonymize_wsi(
             os.close(fd)
             temporary = Path(name)
             if compression == "preserve":
-                verified = _preserve_jpeg(source, temporary, dimensions, mpp, emit, description=description)
+                verified = _preserve_jpeg(source, temporary, dimensions, mpp, emit, description=description, icc=icc)
             else:
                 # Deflate worst-case can approach raw size, including edge padding.
                 required = int(total * tile_size * tile_size * 3 * 1.02) + 64 * 1024**2
@@ -773,6 +805,7 @@ def anonymize_wsi(
                             tile=(tile_size, tile_size), photometric="rgb",
                             compression="deflate", compressionargs={"level": 1},
                             metadata=None, description=description if level == 0 else None, software=False, datetime=False,
+                            iccprofile=icc if level == 0 else None,
                             resolution=resolution, resolutionunit="CENTIMETER" if mpp else "NONE",
                             subfiletype=0 if level == 0 else 1, maxworkers=workers,
                             buffersize=32 * 1024**2,
@@ -788,7 +821,7 @@ def anonymize_wsi(
                     if len(tif.pages) != len(dimensions) or not tif.is_bigtiff:
                         raise ValueError("Unexpected output TIFF structure")
                     for level, page in enumerate(tif.pages):
-                        _validate_metadata(page, allowed_tags, description if level == 0 else None)
+                        _validate_metadata(page, allowed_tags, description if level == 0 else None, icc if level == 0 else None)
                         if (page.imagewidth, page.imagelength) != dimensions[level] or not page.is_tiled:
                             raise ValueError("Output image dimensions do not match")
                         digest = hashlib.sha256()
@@ -810,7 +843,7 @@ def anonymize_wsi(
             generated_levels = 0
             if pyramid:
                 dimensions, extra_verified, preserved_levels, generated_levels = _append_pyramid(
-                    source, temporary, slide, openslide, mpp, compression, emit, description)
+                    source, temporary, slide, openslide, mpp, compression, emit, description, icc)
                 verified += extra_verified
             with openslide.OpenSlide(str(temporary)) as check:
                 if list(check.level_dimensions) != dimensions or check.associated_images:
@@ -819,6 +852,8 @@ def anonymize_wsi(
                     raise ValueError("Output is not an Aperio-compatible tiled TIFF")
                 with check.read_region((0, 0), 0, (64, 64)) as region:
                     region.load()
+                    if region.info.get("icc_profile") != icc:
+                        raise ValueError("OpenSlide ICC readback failed")
                 if _numeric_property(check, "openslide.objective-power") != objective:
                     raise ValueError("Output objective-power validation failed")
                 if pyramid:
@@ -866,7 +901,7 @@ def anonymize_wsi(
                 "pyramid": pyramid, "preserved_levels": preserved_levels, "generated_levels": generated_levels,
                 "thumbnail_verified": pyramid,
                 "status": "metadata_clean_pixels_reviewed" if pixels_reviewed else "metadata_clean_pixel_review_required",
-                "metadata_clean": True, "pixel_review_asserted_by_caller": pixels_reviewed,
+                "metadata_clean": not bool(icc), "icc_review_required": bool(icc), "pixel_review_asserted_by_caller": pixels_reviewed,
                 "redaction_count": len(boxes), "level_dimensions": [list(d) for d in dimensions],
                 "objective_power": objective,
                 "rename_output": rename_output,
@@ -880,10 +915,13 @@ def anonymize_wsi(
                 "source_compressed_payload_copied": compression == "preserve",
                 "jpeg_app_com_removed": compression == "preserve",
                 "reencoded": compression != "preserve" or generated_levels > 0,
-                "base_image_reencoded": compression != "preserve", "icc_profile_copied": False,
+                "base_image_reencoded": compression != "preserve", "icc_profile_copied": bool(icc),
+                "icc_profile_bytes": len(icc) if icc else 0, "source_vendor": source_vendor,
                 "representation": "OpenSlide 2D RGB; not all focal planes/channels",
                 "size_bytes": target.stat().st_size,
             }
+            if icc:
+                result["status"] = "icc_review_required_" + ("pixels_reviewed" if pixels_reviewed else "pixel_review_required")
             row = {
                 **physical,
                 "original_filename": source.name if include_filename else "", "output_filename": target.name,
@@ -915,6 +953,7 @@ def _main():
     parser.add_argument("--compression", choices=("preserve", "lossless"), default="preserve")
     parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
     parser.add_argument("--keep-filename", action="store_true", help="Keep source basename with .tiff extension")
+    parser.add_argument("--preserve-icc", action="store_true", help="Copy original ICC; profile metadata requires separate review")
     parser.add_argument("--pixels-reviewed", action="store_true")
     parser.add_argument("--redact", type=int, nargs=4, action="append", default=[], metavar=("X", "Y", "W", "H"))
     args = parser.parse_args()
@@ -928,7 +967,8 @@ def _main():
 
     result = anonymize_wsi(args.input, args.output, redactions=args.redact,
                            pixels_reviewed=args.pixels_reviewed, compression=args.compression,
-                           pyramid=not args.single_image, rename_output=not args.keep_filename, progress=show_progress)
+                           pyramid=not args.single_image, rename_output=not args.keep_filename,
+                           preserve_icc=args.preserve_icc, progress=show_progress)
     print(json.dumps(result, ensure_ascii=True, indent=2))
 
 

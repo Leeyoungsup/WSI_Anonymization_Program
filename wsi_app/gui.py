@@ -33,7 +33,8 @@ def configure_qt():
 def technical_lines(data):
     def number(value):
         return f"{value:.6g}" if value is not None else "정보 없음"
-    return [f"Magnification: {number(data.get('objective_power'))} × (대물렌즈)",
+    return [f"원본 Vendor: {data.get('source_vendor') or '정보 없음'}",
+            f"Magnification: {number(data.get('objective_power'))} × (대물렌즈)",
             f"Pixel Size: {data.get('width_px', '-')} × {data.get('height_px', '-')} px",
             f"MPP: {number(data.get('mpp_x_um'))} × {number(data.get('mpp_y_um'))} µm/pixel (X/Y)",
             f"Physical Size: {number(data.get('physical_width_mm'))} × {number(data.get('physical_height_mm'))} mm"]
@@ -42,7 +43,7 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WSI Anonymization 1.2.0 · Pyramidal TIFF + CSV")
+        self.setWindowTitle("WSI Anonymization 1.3.0 · Pyramidal TIFF + CSV")
         self.resize(1240, 980)
         self.setMinimumSize(1050, 850)
         self.paths, self.results, self.previews = [], {}, {}
@@ -138,6 +139,7 @@ class Window(QMainWindow):
         self.rename_output = QCheckBox("출력 파일명을 익명 이름으로 변경")
         self.rename_output.setChecked(True)
         self.preserve_mpp = QCheckBox("TIFF에 MPP 보존")
+        self.preserve_icc = QCheckBox("원본 ICC 포함 (별도 검토 필요)")
         for control in (self.export_image, self.export_csv, self.include_filename, self.preserve_mpp):
             control.setChecked(True)
         option(self.export_image, "image", "TIFF 영상", "조직 영상을 익명 파일명의 TIFF로 저장합니다. 기본값은 표준 피라미드 TIFF이며 라벨과 매크로는 포함하지 않습니다.\n\n해제하면 TIFF 파일을 만들지 않고 선택한 CSV만 저장합니다.", 0, 0)
@@ -148,7 +150,7 @@ class Window(QMainWindow):
         self.compression.addItem("원본 JPEG 압축 유지", "preserve")
         self.compression.addItem("무손실 Deflate로 재저장", "lossless")
         option(self.compression, "compression", "압축 방식", "원본 JPEG 압축 유지: 최대 해상도 영상을 재압축하지 않습니다. 호환되는 원본 축소 레벨도 재사용하고, 추가로 필요한 작은 레벨만 JPEG로 생성합니다.\n\n무손실 Deflate: RGB를 무손실 저장합니다. 파일 크기가 크게 늘 수 있습니다. 추가 축소 레벨도 Deflate로 저장합니다.", 2, 0)
-        option(QLabel("개인정보 메타데이터 제거 · 항상 적용"), "privacy", "익명화 범위", "TIFF에서 원본 개인정보 태그, 라벨·매크로·썸네일, ICC와 JPEG APP/COM 부가정보를 제외합니다.\n\n조직 영상에 직접 찍힌 이름이나 식별자는 자동으로 지워지지 않습니다. 아래 검토 확인은 사용자의 확인 기록이며 자동 익명화 인증이 아닙니다.", 2, 1)
+        option(QLabel("개인정보 태그 제거 · ICC 포함 시 별도 검토"), "privacy", "익명화 범위", "TIFF에서 원본 개인정보 태그, 라벨·매크로·원본 썸네일과 JPEG APP/COM 부가정보를 제외합니다. ICC는 기본 제외이며 원본 ICC 포함을 선택하면 프로파일 내부 정보도 함께 복사되어 별도 검토가 필요합니다.\n\n조직 영상에 직접 찍힌 이름이나 식별자는 자동으로 지워지지 않습니다. 아래 검토 확인은 사용자의 확인 기록이며 자동 익명화 인증이 아닙니다.", 2, 1)
         self.structure = QComboBox()
         self.structure.addItem("표준 피라미드 TIFF", True)
         self.structure.addItem("단일 해상도 TIFF", False)
@@ -156,7 +158,8 @@ class Window(QMainWindow):
         self.options_hint = QLabel()
         option(self.rename_output, "rename", "출력 파일명 변경", "체크: anonymous_<임의 ID>.tiff로 저장합니다.\n해제: 원본 이름을 유지하고 확장자만 .tiff로 바꿉니다. 같은 이름이 있으면 _2, _3 등을 붙이며 기존 파일을 덮어쓰지 않습니다.\n\n원본 이름에 환자명·ID가 있으면 해제 시 결과 파일명에도 남습니다. TIFF 내부 메타데이터 제거는 그대로 적용합니다. CSV의 원본 파일명 포함 옵션과는 별개입니다.", 3, 1)
         self.options_hint.setWordWrap(True)
-        options.addWidget(self.options_hint, 4, 0, 1, 2)
+        option(self.preserve_icc, "icc", "ICC 색상 프로파일", "체크하면 원본 조직 영상의 ICC를 TIFF 기본 페이지에 그대로 저장합니다. 색상 변환이나 영상 재압축을 하지 않으며 OpenSlide color_profile로 읽을 수 있습니다.\n\nICC 내부 설명·제조사 정보 등도 그대로 복사되므로 개인정보가 없는지 별도 검토가 필요합니다. 결과는 ICC 검토 필요로 표시합니다. 원본에 ICC가 없으면 추가하지 않습니다. 기본값은 제외입니다.", 4, 0)
+        options.addWidget(self.options_hint, 5, 0, 1, 2)
         layout.addWidget(self.options_box)
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("출력 폴더"))
@@ -216,6 +219,7 @@ class Window(QMainWindow):
         images, csv = self.export_image.isChecked(), self.export_csv.isChecked()
         self.include_filename.setEnabled(csv)
         self.preserve_mpp.setEnabled(images)
+        self.preserve_icc.setEnabled(images)
         self.rename_output.setEnabled(images)
         self.compression.setEnabled(images)
         self.structure.setEnabled(images)
@@ -226,6 +230,7 @@ class Window(QMainWindow):
     def export_options(self):
         return {"export_image": self.export_image.isChecked(), "export_csv": self.export_csv.isChecked(),
                 "rename_output": self.rename_output.isChecked(),
+                "preserve_icc": self.preserve_icc.isChecked(),
                 "include_filename": self.include_filename.isChecked(), "preserve_mpp": self.preserve_mpp.isChecked(),
                 "compression": self.compression.currentData(), "pyramid": self.structure.currentData()}
 
@@ -459,11 +464,13 @@ class Window(QMainWindow):
                 f"영상 레벨 수: {len(report['level_dimensions'])}",
                 *technical_lines(report.get("technical_metadata", {})),
                 f"원본 압축 유지 레벨: {report.get('preserved_levels', 0)} · 추가 생성 레벨: {report.get('generated_levels', 0)}",
-                "메타데이터·부속 이미지: 원본에서 복사하지 않음",
+                "출력 OpenSlide Vendor: aperio (호환 형식)",
+                "원본 개인정보 태그·라벨·매크로 제외; ICC는 아래 상태 참조",
                 "압축: " + ("원본 JPEG 유지" if report["compression"] == "jpeg-preserved" else "무손실 Deflate"),
                 f"전체 타일 검증: {report['verified_tiles']:,}개 통과",
                 "영상 개인정보 검토: " + ("사용자가 확인함" if report["pixel_review_asserted_by_caller"] else "추가 검토 필요"),
-                "", "원본 ICC는 제외되므로 색상 관리 뷰어에서 표시가 달라질 수 있습니다.",
+                "", (f"ICC: 원본 포함 ({report.get('icc_profile_bytes', 0):,} bytes) · ICC 내부 정보 별도 검토 필요"
+                       if report.get("icc_profile_copied") else "ICC: 미포함 (원본에 없거나 제외 선택)"),
                 "", f"저장 위치: {data['directory']}",
                 "기술 정보: " + (Path(data['csv_path']).name if data.get("csv_path") else "CSV 저장 안 함")]))
             return

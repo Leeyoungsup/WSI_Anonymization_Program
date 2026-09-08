@@ -10,7 +10,7 @@ from pathlib import Path
 
 import tifffile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from wsi_anonymizer import _objective_power, _numeric_property, _technical_metadata
+from wsi_anonymizer import _objective_power, _numeric_property, _technical_metadata, _source_vendor
 
 
 def load_openslide():
@@ -74,7 +74,7 @@ def inspect(path: Path, sample_id: str, openslide) -> dict:
         with openslide.OpenSlide(str(path)) as slide:
             technical = _technical_metadata(slide.dimensions,
                 (_numeric_property(slide, "openslide.mpp-x"), _numeric_property(slide, "openslide.mpp-y")),
-                _objective_power(slide))
+                _objective_power(slide), _source_vendor(slide))
             result["openslide"] = {
                 "technical_metadata": technical,
                 "vendor": slide.properties.get("openslide.vendor"),

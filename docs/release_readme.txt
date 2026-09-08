@@ -1,4 +1,11 @@
-WSI Anonymization 1.2.0 — Windows x64
+WSI Anonymization 1.3.0 — Windows x64
+
+원본 Vendor를 정보 화면·TIFF 기술 정보·CSV에 표시합니다.
+출력 openslide.vendor=aperio와 원본 Vendor(예: hamamatsu)는 구분합니다.
+원본 ICC 포함 체크박스를 추가했습니다. 기본 제외이며 원본에 ICC가 없으면 생략합니다.
+ICC 포함 시 색상 프로파일과 그 안의 부가정보가 그대로 복사되므로 별도 검토가 필요합니다.
+이 경우 metadata_clean=False 및 ICC 검토 필요 상태로 기록합니다.
+OpenSlide의 color_profile로 읽을 수 있으며 픽셀 색상 변환·재압축은 하지 않습니다.
 
 출력 파일명을 익명 이름으로 변경: 기본 체크. 해제하면 원본 이름 + .tiff로 저장합니다.
 같은 이름이 있으면 _2, _3 등을 붙이고 기존 파일은 덮어쓰지 않습니다.
