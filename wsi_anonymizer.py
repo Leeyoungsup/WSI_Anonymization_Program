@@ -45,6 +45,7 @@ CSV_FIELDS = (
     "width_px", "height_px", "objective_power", "source_level_count", "output_pages",
     "source_size_bytes", "output_size_bytes", "compression", "exported_at",
     "status", "verified_tiles", "pixel_review_asserted_by_caller",
+    "physical_width_mm", "physical_height_mm",
 )
 
 
@@ -54,6 +55,42 @@ def _numeric_property(slide, key):
         return value if math.isfinite(value) and 0.000001 <= value <= 100000 else None
     except (KeyError, ValueError, TypeError):
         return None
+
+
+def _objective_power(slide):
+    value = _numeric_property(slide, "openslide.objective-power")
+    if value is not None:
+        return value
+    try:
+        data = json.loads(slide.properties.get("tiff.ImageDescription", ""))
+        if data.get("schema") != "wsi-technical-v1":
+            return None
+        value = data.get("objective_power")
+        if type(value) in (int, float) and math.isfinite(value) and 0.000001 <= value <= 100000:
+            return float(value)
+    except (ValueError, TypeError, AttributeError):
+        pass
+    return None
+
+
+def _technical_metadata(dimensions, mpp, objective):
+    width, height = dimensions
+    x, y = mpp if mpp is not None else (None, None)
+    return {"schema": "wsi-technical-v1", "objective_power": objective,
+            "width_px": width, "height_px": height, "mpp_x_um": x, "mpp_y_um": y,
+            "physical_width_mm": width * x / 1000 if x is not None else None,
+            "physical_height_mm": height * y / 1000 if y is not None else None}
+
+
+def _validate_metadata(page, allowed, description=None):
+    permitted = allowed | ({270} if description is not None else set())
+    if set(page.tags.keys()) - permitted:
+        raise ValueError("Unexpected output metadata")
+    for tag in page.tags.values():
+        if int(tag.dtype) == 2 and (tag.code != 270 or description is None or tag.value != description):
+            raise ValueError("Unexpected text metadata")
+    if description is not None and page.description != description:
+        raise ValueError("Technical metadata was not retained")
 
 
 def _run_folder(base, run_id):
@@ -244,7 +281,7 @@ def _jpeg_entropy(data, *, restart_segment=False):
         raise ValueError("Unsupported marker inside JPEG scan")
 
 
-def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, append=False):
+def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, append=False, description=None):
     """Repackage JPEG coding data, never invoke an encoder.
 
     tifffile exposes NDPI restart segments as virtual MCU-row tiles. Group
@@ -349,7 +386,7 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, appen
         with tifffile.TiffWriter(target, bigtiff=True, append=append) as writer:
             writer.write(tiles(), shape=(height, width, 3), dtype=np.uint8,
                          tile=(th * group, tw), photometric="ycbcr", compression="jpeg",
-                         subsampling=subsampling, metadata=None, description=None,
+                         subsampling=subsampling, metadata=None, description=description,
                          software=False, datetime=False, subfiletype=1 if append else 0,
                          resolution=None if mpp is None else (10000 / mpp[0], 10000 / mpp[1]),
                          resolutionunit="CENTIMETER" if mpp else "NONE")
@@ -362,8 +399,7 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, appen
         page = output.pages[-1] if append else output.pages[0]
         allowed = {254, 256, 257, 258, 259, 262, 277, 282, 283, 284, 296,
                    322, 323, 324, 325, 530, 532}
-        if set(page.tags.keys()) - allowed or any(int(t.dtype) == 2 for t in page.tags.values()):
-            raise ValueError("Unexpected output metadata")
+        _validate_metadata(page, allowed, description)
         if page.shape != (height, width, 3) or len(page.dataoffsets) != total or not page.is_tiled:
             raise ValueError("Output dimensions/tile count changed")
         for i, (offset, count) in enumerate(zip(page.dataoffsets, page.databytecounts)):
@@ -455,7 +491,7 @@ def _append_overview(target, openslide, mpp, compression, notify):
     return (width, height), total
 
 
-def _append_pyramid(source, target, slide, openslide, mpp, compression, emit):
+def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, description=None):
     """Reuse only recognized tissue levels; never copy label/macro/thumbnail IFDs."""
     dimensions = [slide.dimensions]
     candidates = []
@@ -505,10 +541,9 @@ def _append_pyramid(source, target, slide, openslide, mpp, compression, emit):
         if len(tif.pages) != len(dimensions):
             raise ValueError("Unexpected pyramid page count")
         for index, page in enumerate(tif.pages):
+            _validate_metadata(page, allowed, description if index == 0 else None)
             if (not page.is_tiled or page.subifds or page.subfiletype != (1 if index else 0)
-                    or (page.imagewidth, page.imagelength) != dimensions[index]
-                    or set(page.tags.keys()) - allowed
-                    or any(int(tag.dtype) == 2 for tag in page.tags.values())):
+                    or (page.imagewidth, page.imagelength) != dimensions[index]):
                 raise ValueError("Invalid pyramid structure or unexpected metadata")
     emit("pyramid", 1, 1)
     return dimensions, verified, preserved if compression == "preserve" else 0, len(dimensions) - preserved
@@ -623,7 +658,7 @@ def anonymize_wsi(
             source_level_count = slide.level_count
             source_mpp = (_numeric_property(slide, "openslide.mpp-x"),
                           _numeric_property(slide, "openslide.mpp-y"))
-            objective = _numeric_property(slide, "openslide.objective-power")
+            objective = _objective_power(slide)
             if any(w <= 0 or h <= 0 for w, h in dimensions):
                 raise ValueError("Invalid image dimensions")
             if any(not math.isfinite(d) or d < 1 for d in downsamples):
@@ -632,6 +667,10 @@ def anonymize_wsi(
             mpp = None
             if preserve_mpp and all(v is not None for v in source_mpp):
                 mpp = source_mpp
+            technical = _technical_metadata(dimensions[0], mpp, objective)
+            source_technical = _technical_metadata(dimensions[0], source_mpp, objective)
+            physical = {key: source_technical[key] for key in ("physical_width_mm", "physical_height_mm")}
+            description = json.dumps(technical, sort_keys=True, separators=(",", ":"), allow_nan=False)
             tiles_per_level = [math.ceil(w / tile_size) * math.ceil(h / tile_size)
                                for w, h in dimensions]
             total = sum(tiles_per_level)
@@ -640,6 +679,7 @@ def anonymize_wsi(
             if not export_image:
                 emit("write", 0, 1)
                 row = {
+                    **physical,
                     "original_filename": source.name if include_filename else "",
                     "source_format": source.suffix.lower(),
                     "mpp_x_um": source_mpp[0], "mpp_y_um": source_mpp[1],
@@ -661,12 +701,13 @@ def anonymize_wsi(
                         "format": "csv-only", "status": "technical_metadata_only",
                         "level_dimensions": [list(d) for d in dimensions], "verified_tiles": 0,
                         "pixel_review_asserted_by_caller": pixels_reviewed, "size_bytes": 0,
-                        "compression": None, "mpp": list(source_mpp)}
+                        "compression": None, "mpp": list(source_mpp), "objective_power": objective,
+                        "technical_metadata": source_technical}
             fd, name = tempfile.mkstemp(prefix=".wsi_", suffix=".partial.tiff", dir=target.parent)
             os.close(fd)
             temporary = Path(name)
             if compression == "preserve":
-                verified = _preserve_jpeg(source, temporary, dimensions, mpp, emit)
+                verified = _preserve_jpeg(source, temporary, dimensions, mpp, emit, description=description)
             else:
                 # Deflate worst-case can approach raw size, including edge padding.
                 required = int(total * tile_size * tile_size * 3 * 1.02) + 64 * 1024**2
@@ -700,7 +741,7 @@ def anonymize_wsi(
                             tiles(), shape=(height, width, 3), dtype=np.uint8,
                             tile=(tile_size, tile_size), photometric="rgb",
                             compression="deflate", compressionargs={"level": 1},
-                            metadata=None, description=None, software=False, datetime=False,
+                            metadata=None, description=description if level == 0 else None, software=False, datetime=False,
                             resolution=resolution, resolutionunit="CENTIMETER" if mpp else "NONE",
                             subfiletype=0 if level == 0 else 1, maxworkers=workers,
                             buffersize=32 * 1024**2,
@@ -716,10 +757,7 @@ def anonymize_wsi(
                     if len(tif.pages) != len(dimensions) or not tif.is_bigtiff:
                         raise ValueError("Unexpected output TIFF structure")
                     for level, page in enumerate(tif.pages):
-                        if set(page.tags.keys()) - allowed_tags:
-                            raise ValueError("Unexpected metadata in output TIFF")
-                        if any(int(tag.dtype) == 2 for tag in page.tags.values()):
-                            raise ValueError("Text metadata detected in output TIFF")
+                        _validate_metadata(page, allowed_tags, description if level == 0 else None)
                         if (page.imagewidth, page.imagelength) != dimensions[level] or not page.is_tiled:
                             raise ValueError("Output image dimensions do not match")
                         digest = hashlib.sha256()
@@ -741,7 +779,7 @@ def anonymize_wsi(
             generated_levels = 0
             if pyramid:
                 dimensions, extra_verified, preserved_levels, generated_levels = _append_pyramid(
-                    source, temporary, slide, openslide, mpp, compression, emit)
+                    source, temporary, slide, openslide, mpp, compression, emit, description)
                 verified += extra_verified
             with openslide.OpenSlide(str(temporary)) as check:
                 if list(check.level_dimensions) != dimensions or check.associated_images:
@@ -750,6 +788,8 @@ def anonymize_wsi(
                     raise ValueError("Output is not a generic tiled TIFF")
                 with check.read_region((0, 0), 0, (64, 64)) as region:
                     region.load()
+                if _objective_power(check) != objective:
+                    raise ValueError("Output objective-power validation failed")
                 if pyramid:
                     with check.get_thumbnail((512, 512)) as thumbnail:
                         thumbnail.load()
@@ -788,6 +828,8 @@ def anonymize_wsi(
                 "status": "metadata_clean_pixels_reviewed" if pixels_reviewed else "metadata_clean_pixel_review_required",
                 "metadata_clean": True, "pixel_review_asserted_by_caller": pixels_reviewed,
                 "redaction_count": len(boxes), "level_dimensions": [list(d) for d in dimensions],
+                "objective_power": objective,
+                "technical_metadata": technical,
                 "mpp": list(mpp) if mpp else None, "compression": "jpeg-preserved" if compression == "preserve" else "deflate-lossless",
                 "all_output_tiles_verified": True, "verified_tiles": verified,
                 "verification": "compressed-sha256-and-all-tiles-decode" if compression == "preserve" else
@@ -802,6 +844,7 @@ def anonymize_wsi(
                 "size_bytes": target.stat().st_size,
             }
             row = {
+                **physical,
                 "original_filename": source.name if include_filename else "", "output_filename": target.name,
                 "source_format": source.suffix.lower(), "mpp_x_um": source_mpp[0], "mpp_y_um": source_mpp[1],
                 "width_px": dimensions[0][0], "height_px": dimensions[0][1],

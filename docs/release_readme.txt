@@ -1,4 +1,11 @@
-WSI Anonymization 1.1.0 — Windows x64
+WSI Anonymization 1.1.1 — Windows x64
+
+원본의 대물렌즈 배율은 숫자만 TIFF ImageDescription에 새로 기록합니다.
+Pixel Size는 전체 영상 픽셀 수, Physical Size는 픽셀 수 × MPP / 1000(mm)입니다.
+이 네 가지 기술 정보를 TIFF, CSV, 프로그램 정보 화면에서 확인할 수 있습니다.
+MPP는 기존처럼 TIFF 해상도 태그와 CSV에 저장합니다. 배율은 CSV에도 저장합니다.
+배율이 없는 입력은 추정하지 않습니다. 이 프로그램에서는 확인할 수 있지만,
+외부 뷰어의 배율 표시는 해당 뷰어의 기술 메타데이터 지원에 따라 다릅니다.
 
 실행
 1. ZIP 압축을 해제합니다.

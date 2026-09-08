@@ -1,5 +1,6 @@
 """Pyramid metadata boundary, byte preservation, bounded thumbnail and masks."""
 import csv
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -20,13 +21,54 @@ class PyramidTests(unittest.TestCase):
         self.source = self.root / "input.tiff"
         pixels = np.random.default_rng(7).integers(0, 256, (1024, 2048, 3), dtype=np.uint8)
         with tifffile.TiffWriter(self.source) as writer:
-            writer.write(pixels, tile=(128,128), compression="jpeg", photometric="rgb", description="PATIENT_SENTINEL")
+            writer.write(pixels, tile=(128,128), compression="jpeg", photometric="rgb", description="PATIENT_SENTINEL", metadata=None)
             writer.write(np.zeros((24,64,3), dtype=np.uint8), photometric="rgb", description="PATIENT_SENTINEL_LABEL")
             writer.write(pixels[::2,::2], tile=(128,128), compression="jpeg", photometric="rgb",
                          subfiletype=1, description="PATIENT_SENTINEL_REDUCED")
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_numeric_objective_retained_without_source_text_and_roundtrip(self):
+        with tifffile.TiffFile(self.source, mode="r+") as tif:
+            tif.pages[0].tags[270].overwrite(json.dumps({
+                "schema": "wsi-technical-v1", "objective_power": 40,
+                "patient": "PATIENT_SENTINEL"}))
+        for compression in ("preserve", "lossless"):
+            result = anonymize_wsi(self.source, self.root / compression, compression=compression)
+            self.assertEqual(result["objective_power"], 40)
+            path = Path(result["output_path"])
+            self.assertNotIn(b"PATIENT_SENTINEL", path.read_bytes())
+            with tifffile.TiffFile(path) as tif:
+                self.assertEqual(json.loads(tif.pages[0].description), result["technical_metadata"])
+                self.assertEqual(result["technical_metadata"]["width_px"], 2048)
+                self.assertTrue(all(270 not in p.tags for p in tif.pages[1:]))
+            again = anonymize_wsi(path, self.root / "again", export_image=False)
+            self.assertEqual(again["objective_power"], 40)
+
+    def test_invalid_objective_is_omitted(self):
+        for value in ("patient-name", True, -40, float("nan")):
+            with tifffile.TiffFile(self.source, mode="r+") as tif:
+                tif.pages[0].tags[270].overwrite(json.dumps({
+                    "schema": "wsi-technical-v1", "objective_power": value}))
+            result = anonymize_wsi(self.source, self.root / "invalid", export_image=False)
+            self.assertIsNone(result["objective_power"])
+
+    def test_physical_size_and_mpp_opt_out(self):
+        from wsi_anonymizer import _technical_metadata
+        self.assertEqual(_technical_metadata((2000, 1000), (.25, .5), 40)["physical_width_mm"], .5)
+        with patch("wsi_anonymizer._numeric_property", side_effect=lambda slide, key:
+                   {"openslide.mpp-x": .25, "openslide.mpp-y": .5}.get(key)):
+            for enabled in (True, False):
+                result = anonymize_wsi(self.source, self.root / "physical", preserve_mpp=enabled)
+                with tifffile.TiffFile(result["output_path"]) as tif:
+                    data = json.loads(tif.pages[0].description)
+                    self.assertEqual(data["physical_width_mm"], .512 if enabled else None)
+                    self.assertEqual(data["physical_height_mm"], .512 if enabled else None)
+                    self.assertEqual(data["mpp_x_um"], .25 if enabled else None)
+                with open(result["csv_path"], encoding="utf-8-sig", newline="") as stream:
+                    row = list(csv.DictReader(stream))[-1]
+                    self.assertEqual(float(row["physical_width_mm"]), .512)
 
     def test_default_pyramid_preserves_native_levels_and_fast_thumbnail(self):
         original_encode = imagecodecs.jpeg_encode

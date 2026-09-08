@@ -1,4 +1,6 @@
-# 원본 압축 유지 피라미드 TIFF + CSV 정책 v5
+# 원본 압축 유지 피라미드 TIFF + CSV 정책 v6
+
+기술 정보 허용 목록: 원본 대물렌즈 배율, 전체 영상 픽셀 수, X/Y MPP, MPP로 계산한 전체 영상 영역 크기(mm). 기본 페이지 ImageDescription에는 이 숫자와 고정 스키마 식별자만 새로 작성하며 원본 설명문을 복사하지 않습니다. 출력 설명문은 생성한 내용과 정확히 일치하는지 검증합니다. 축소 페이지는 문자열 태그를 허용하지 않습니다. 원본에 없는 배율·MPP는 추정하지 않습니다. MPP 저장을 해제하면 TIFF의 MPP·Physical Size는 null입니다. CSV는 원본 기술 정보를 유지합니다.
 
 `anonymize_wsi()`의 기본값은 `compression="preserve", pyramid=True`입니다. 첫 IFD는 최대 해상도 타일 영상이며 이후 IFD는 tiled/reduced-resolution 비트를 설정합니다. SubIFD는 사용하지 않습니다. `pyramid=False`로 최대 해상도만 저장할 수 있습니다.
 

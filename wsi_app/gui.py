@@ -30,10 +30,19 @@ def configure_qt():
     QCoreApplication.setLibraryPaths([str(plugins)])
 
 
+def technical_lines(data):
+    def number(value):
+        return f"{value:.6g}" if value is not None else "정보 없음"
+    return [f"Magnification: {number(data.get('objective_power'))} × (대물렌즈)",
+            f"Pixel Size: {data.get('width_px', '-')} × {data.get('height_px', '-')} px",
+            f"MPP: {number(data.get('mpp_x_um'))} × {number(data.get('mpp_y_um'))} µm/pixel (X/Y)",
+            f"Physical Size: {number(data.get('physical_width_mm'))} × {number(data.get('physical_height_mm'))} mm"]
+
+
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WSI Anonymization 1.1.0 · Pyramidal TIFF + CSV")
+        self.setWindowTitle("WSI Anonymization 1.1.1 · Pyramidal TIFF + CSV")
         self.resize(1240, 980)
         self.setMinimumSize(1050, 850)
         self.paths, self.results, self.previews = [], {}, {}
@@ -132,7 +141,7 @@ class Window(QMainWindow):
         option(self.export_image, "image", "TIFF 영상", "조직 영상을 익명 파일명의 TIFF로 저장합니다. 기본값은 표준 피라미드 TIFF이며 라벨과 매크로는 포함하지 않습니다.\n\n해제하면 TIFF 파일을 만들지 않고 선택한 CSV만 저장합니다.", 0, 0)
         option(self.export_csv, "csv", "슬라이드 정보 CSV", "MPP(픽셀의 실제 크기), 영상 크기, 배율, 입력 형식, 파일 크기와 처리 결과를 CSV에 기록합니다. 환자명·검체 ID·스캔 날짜 등 원본 개인정보 태그는 포함하지 않습니다.\n\nCSV만 선택하면 영상을 변환하거나 픽셀 검증하지 않습니다.", 0, 1)
         option(self.include_filename, "filename", "원본 파일명 포함", "CSV에 원본 파일명을 기록하여 결과와 대응시킵니다. 파일명 자체에 이름이나 환자 ID가 있으면 CSV에도 남습니다.\n\n해제하면 original_filename 열을 빈칸으로 저장합니다. TIFF 내부에는 원본 파일명을 기록하지 않습니다.", 1, 1)
-        option(self.preserve_mpp, "mpp", "TIFF에 MPP 보존", "MPP는 픽셀 하나의 실제 길이(µm/pixel)입니다. TIFF 해상도 정보에 기록하여 측정 도구가 실제 크기를 계산할 수 있게 합니다.\n\n해제해도 영상 픽셀 크기는 바뀌지 않습니다. CSV를 선택했다면 원본 MPP는 CSV에 기록됩니다.", 1, 0)
+        option(self.preserve_mpp, "mpp", "기술 정보와 MPP 보존", "Magnification: 원본 대물렌즈 배율입니다.\nPixel Size: 전체 영상의 가로 × 세로 픽셀 수입니다.\nMPP: 픽셀 하나의 실제 길이(µm/pixel, X/Y)입니다.\nPhysical Size: 픽셀 수 × MPP로 계산한 전체 영상 영역의 크기(mm)이며 조직만의 크기가 아닙니다.\n\n기술 정보는 숫자만 TIFF에 새로 기록합니다. 원본에 없는 배율·MPP는 추정하지 않습니다. 외부 뷰어의 배율 표시는 뷰어 지원에 따라 다릅니다.\n\nMPP 보존을 해제하면 TIFF의 MPP와 Physical Size를 생략합니다. CSV에는 원본 기술 정보를 기록합니다.", 1, 0)
         self.compression = QComboBox()
         self.compression.addItem("원본 JPEG 압축 유지", "preserve")
         self.compression.addItem("무손실 Deflate로 재저장", "lossless")
@@ -436,12 +445,14 @@ class Window(QMainWindow):
         if "report" in data:
             if report["format"] == "csv-only":
                 self.details.setPlainText("\n".join(["슬라이드 정보 CSV 저장 완료", "영상 변환·픽셀 검증은 수행하지 않았습니다.",
+                    *technical_lines(report.get("technical_metadata", {})),
                     f"영상 크기: {report['level_dimensions'][0]}", f"저장 위치: {data['directory']}",
                     f"기술 정보: {Path(data['csv_path']).name}"]))
                 return
             self.details.setPlainText("\n".join([
                 "형식: " + ("표준 피라미드 TIFF" if report.get("pyramid") else "단일 해상도 TIFF"), f"영상 크기: {report['level_dimensions'][0]}",
                 f"영상 레벨 수: {len(report['level_dimensions'])}",
+                *technical_lines(report.get("technical_metadata", {})),
                 f"원본 압축 유지 레벨: {report.get('preserved_levels', 0)} · 추가 생성 레벨: {report.get('generated_levels', 0)}",
                 "메타데이터·부속 이미지: 원본에서 복사하지 않음",
                 "압축: " + ("원본 JPEG 유지" if report["compression"] == "jpeg-preserved" else "무손실 Deflate"),
@@ -455,6 +466,7 @@ class Window(QMainWindow):
         if slide.get("thumbnail_skip_reason"):
             self.preview.setText("대용량 단일 영상은 썸네일을 생략합니다.\n메모리 사용을 제한하기 위한 동작입니다.")
         lines = [f"영상 크기: {slide.get('dimensions', '-')}",
+                 *technical_lines(slide.get("technical_metadata", {})),
                  f"영상 레벨: {len(slide.get('level_dimensions', []))}",
                  f"부속 이미지: {', '.join(slide.get('associated_images', {})) or 'OpenSlide 목록 없음'}",
                  f"검사 영역: {len(slide.get('decoded_regions', []))}개"]

@@ -55,6 +55,7 @@ with tempfile.TemporaryDirectory(dir=ROOT / "artifacts") as folder:
     assert len(rows)==2 and all(r["original_filename"]=="" for r in rows)
     assert all(r["mpp_x_um"]=="0.25" for r in rows)
     assert "CSV" in w.details.toPlainText()
+    assert all(label in w.details.toPlainText() for label in ("Magnification:", "Pixel Size:", "MPP:", "Physical Size:"))
     w.export_image.setChecked(True)
     w.export_csv.setChecked(False)
     w.preserve_mpp.setChecked(False)

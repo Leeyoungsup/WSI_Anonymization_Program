@@ -1,4 +1,5 @@
 import hashlib
+import json
 import csv
 import uuid
 from pathlib import Path
@@ -52,7 +53,8 @@ class StandaloneTests(unittest.TestCase):
             expected[110:160, 120:160] = 255
             np.testing.assert_array_equal(tif.pages[0].asarray(), expected)
             for page in tif.pages:
-                self.assertFalse(any(int(t.dtype) == 2 for t in page.tags.values()))
+                self.assertEqual([t.code for t in page.tags.values() if int(t.dtype) == 2], [270])
+                self.assertEqual(json.loads(page.description), result["technical_metadata"])
         self.assertEqual(hashlib.sha256(self.source.read_bytes()).hexdigest(), self.original_hash)
         with Path(result["csv_path"]).open(encoding="utf-8-sig", newline="") as stream:
             rows = list(csv.DictReader(stream))

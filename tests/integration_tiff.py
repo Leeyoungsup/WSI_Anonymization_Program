@@ -39,6 +39,11 @@ for source in sorted((root / "data").iterdir()):
     with tifffile.TiffFile(result["output_path"]) as tif:
         assert len(tif.pages) >= 3 and all(p.is_tiled and not p.subifds for p in tif.pages)
         assert tif.pages[0].compression == 7
+        assert json.loads(tif.pages[0].description) == result["technical_metadata"]
+    assert result["objective_power"] == 40
+    technical = result["technical_metadata"]
+    assert technical["physical_width_mm"] == technical["width_px"] * technical["mpp_x_um"] / 1000
+    assert technical["physical_height_mm"] == technical["height_px"] * technical["mpp_y_um"] / 1000
     assert result["base_image_reencoded"] is False
     assert result["thumbnail_verified"] is True
     with source.open("rb") as stream:
@@ -54,4 +59,5 @@ with Path(reports[-1]["csv_path"]).open(encoding="utf-8-sig", newline="") as str
     rows = list(csv.DictReader(stream))
 assert len(rows) == len(reports)
 assert all(row["mpp_x_um"] and row["mpp_y_um"] and int(row["output_pages"]) >= 3 for row in rows)
+assert all(row["physical_width_mm"] and row["physical_height_mm"] and float(row["objective_power"]) == 40 for row in rows)
 print("Shared timestamp folder and CSV rows verified", flush=True)

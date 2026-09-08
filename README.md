@@ -4,7 +4,11 @@ SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도�
 
 ## Windows EXE
 
-`release/WSI_Anonymization-1.1.0-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
+`release/WSI_Anonymization-1.1.1-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
+
+TIFF와 CSV에는 Magnification(원본 대물렌즈 배율), Pixel Size(전체 영상 가로·세로 픽셀 수), MPP(X/Y, µm/pixel), Physical Size(전체 영상 영역 가로·세로, mm)를 저장합니다. Physical Size는 픽셀 수 × MPP / 1000으로 계산하며 조직만의 크기가 아닙니다. 배율이나 MPP가 없으면 추정하지 않습니다.
+
+TIFF 기본 페이지의 ImageDescription은 검증한 숫자만으로 새로 만든 `wsi-technical-v1` JSON입니다. 원본 설명문은 복사하지 않습니다. MPP는 표준 해상도 태그에도 기록하며, MPP 보존을 해제하면 TIFF의 MPP와 Physical Size는 null로 기록합니다. 이 프로그램은 배율을 다시 읽어 표시하지만 외부 뷰어의 자동 배율 표시는 해당 뷰어 지원에 따라 다릅니다. API 결과의 `technical_metadata`에서 네 항목을 확인할 수 있습니다.
 
 파일 추가 또는 드래그 → 옵션 선택 → 출력 폴더 선택 → **선택 항목 내보내기** 순서입니다. 각 항목 옆 **i** 버튼에서 설명을 확인할 수 있습니다.
 
@@ -69,6 +73,7 @@ CSV는 UTF-8 BOM으로 저장하며 다음 기술 정보를 기록합니다.
 | 원본/출력 파일명 | original_filename, output_filename |
 | 형식·MPP | source_format, mpp_x_um, mpp_y_um |
 | 영상 크기·배율 | width_px, height_px, objective_power |
+| 실제 영상 영역 크기(mm) | physical_width_mm, physical_height_mm |
 | 원본/출력 레벨 수 | source_level_count, output_pages |
 | 파일 크기·압축 | source_size_bytes, output_size_bytes, compression |
 | 처리 시각·상태·검증 | exported_at, status, verified_tiles, pixel_review_asserted_by_caller |

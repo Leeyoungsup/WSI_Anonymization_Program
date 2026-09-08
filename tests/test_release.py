@@ -24,7 +24,10 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     with tifffile.TiffWriter(source) as writer:
         for index, array in enumerate((pixels, pixels[::2, ::2])):
             writer.write(array, compression="jpeg", tile=(128,128), photometric="rgb",
-                         subfiletype=index, description="PATIENT_SENTINEL")
+                         subfiletype=index, metadata=None,
+                         resolution=(40000, 20000), resolutionunit="CENTIMETER",
+                         description=json.dumps({"schema": "wsi-technical-v1", "objective_power": 40,
+                                                 "patient": "PATIENT_SENTINEL"}))
     original = hashlib.sha256(source.read_bytes()).digest()
 
     def run(action="copy", **options):
@@ -47,6 +50,13 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     assert preserved["report"]["preserved_levels"] == 2
     assert preserved["report"]["generated_levels"] == 1
     assert preserved["report"]["thumbnail_verified"] is True
+    assert preserved["report"]["objective_power"] == 40
+    technical = preserved["report"]["technical_metadata"]
+    assert technical["width_px"] == 2048 and technical["height_px"] == 1024
+    assert technical["mpp_x_um"] == .25 and technical["mpp_y_um"] == .5
+    assert technical["physical_width_mm"] == .512 and technical["physical_height_mm"] == .512
+    with tifffile.TiffFile(preserved["file"]) as tif:
+        assert json.loads(tif.pages[0].description) == technical
     assert b"PATIENT_SENTINEL" not in Path(preserved["file"]).read_bytes()
     np.testing.assert_array_equal(tifffile.imread(source), tifffile.imread(preserved["file"]))
     lossless = run(compression="lossless", export_csv=False)["data"]
