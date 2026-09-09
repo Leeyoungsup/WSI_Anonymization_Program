@@ -47,6 +47,7 @@ CSV_FIELDS = (
     "status", "verified_tiles", "pixel_review_asserted_by_caller",
     "physical_width_mm", "physical_height_mm",
     "source_vendor", "icc_profile_copied", "icc_review_required",
+    "anonymization_audit",
 )
 
 
@@ -99,6 +100,48 @@ def _objective_power(slide):
     except (ValueError, TypeError, AttributeError):
         pass
     return None
+
+
+def _inventory(path, slide=None):
+    """Record tag IDs/presence only. Never record original metadata values."""
+    data = {"tiff_checked": False, "tags": [], "text_tags": [], "associated": []}
+    if slide is not None:
+        data["associated"] = [name if name in ("label", "macro", "thumbnail") else "other"
+                              for name in slide.associated_images]
+    try:
+        with tifffile.TiffFile(path) as tif:
+            data["tags"] = sorted({tag.code for page in tif.pages for tag in page.tags.values()})
+            data["text_tags"] = sorted({tag.code for page in tif.pages for tag in page.tags.values() if int(tag.dtype) == 2})
+            data["tiff_checked"] = True
+    except tifffile.TiffFileError:
+        pass
+    return data
+
+
+def _removal_audit(before, after, *, rename_output, include_filename, export_csv, icc, reviewed):
+    source, output = set(before["tags"]), set(after["tags"])
+    checked = before["tiff_checked"] and after["tiff_checked"]
+    entries = []
+    for name, code in (("description", 270), ("software", 305), ("datetime", 306),
+                       ("document_name", 269), ("artist", 315), ("host", 316), ("icc", 34675)):
+        status = "not_checked" if not checked else "not_present" if code not in source else (
+            "removed" if code not in output else "retained" if name == "icc" else "rewritten")
+        entries.append({"item": name, "status": status})
+    for name in ("label", "macro", "thumbnail", "other"):
+        count = before["associated"].count(name)
+        entries.append({"item": name, "status": "removed" if count else "not_present", "count": count})
+    entries.extend([
+        {"item": "filename", "status": "renamed" if rename_output else "retained"},
+        {"item": "csv_filename", "status": "not_exported" if not export_csv else "retained" if include_filename else "excluded"},
+        {"item": "pixels", "status": "user_reviewed" if reviewed else "review_required"},
+        {"item": "icc_review", "status": "review_required" if icc else "not_applicable"},
+        {"item": "jpeg_app_com", "status": "excluded_by_policy"},
+    ])
+    return {"scope": "top-level TIFF tag IDs and OpenSlide associated images; no patient-field detection",
+            "entries": entries, "tag_comparison_available": checked,
+            "removed_tag_codes": sorted(source - output) if checked else [],
+            "removed_text_tag_codes": sorted(set(before["text_tags"]) - output) if checked else [],
+            "output_tag_codes": sorted(output)}
 
 
 def _source_vendor(slide):
@@ -627,9 +670,9 @@ def anonymize_wsi(
         must be True. CSV-only mode reads technical metadata without conversion
         or pixel validation; output_path is None. Without CSV, csv_path is None.
     include_filename: include the original basename in CSV (default True).
+        False leaves that CSV field empty; rename_output controls TIFF names.
     rename_output: use an anonymous UUID filename (default True); False keeps
         the source stem with .tiff. Collisions receive _2, _3, etc.; never overwrite.
-        False leaves that field empty; output TIFF names remain anonymous.
     redactions: (x, y, width, height), painted white; requires 'lossless' mode.
     pixels_reviewed: caller confirms no identifiers remain outside supplied masks.
     preserve_mpp: copy only finite positive numeric microns-per-pixel calibration.
@@ -701,6 +744,7 @@ def anonymize_wsi(
     try:
         stat_before = source.stat()
         with openslide.OpenSlide(str(source)) as slide:
+            before_inventory = _inventory(source, slide) if export_image else None
             dimensions = [slide.dimensions]
             downsamples = [1.0]
             source_level_count = slide.level_count
@@ -880,6 +924,9 @@ def anonymize_wsi(
             if cancelled is not None and cancelled():
                 raise ExportCancelled("Export cancelled")
             # Atomic no-clobber publication on both Windows and POSIX.
+            audit = _removal_audit(before_inventory, _inventory(temporary), rename_output=rename_output,
+                                  include_filename=include_filename, export_csv=export_csv,
+                                  icc=icc, reviewed=pixels_reviewed)
             suffix = 1
             while True:
                 try:
@@ -906,6 +953,7 @@ def anonymize_wsi(
                 "objective_power": objective,
                 "rename_output": rename_output,
                 "technical_metadata": technical,
+                "anonymization_audit": audit,
                 "mpp": list(mpp) if mpp else None, "compression": "jpeg-preserved" if compression == "preserve" else "deflate-lossless",
                 "all_output_tiles_verified": True, "verified_tiles": verified,
                 "verification": "compressed-sha256-and-all-tiles-decode" if compression == "preserve" else
@@ -932,6 +980,7 @@ def anonymize_wsi(
                 "compression": result["compression"], "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "status": result["status"], "verified_tiles": verified,
                 "pixel_review_asserted_by_caller": pixels_reviewed,
+                "anonymization_audit": json.dumps(audit, ensure_ascii=True, separators=(",", ":")),
             }
             try:
                 result["csv_path"] = str(_record_csv(folder, row)) if export_csv else None

@@ -1,8 +1,14 @@
 # WSI Anonymization Program
 
+EXE 없이 함수로 사용하려면 [Python API 사용 가이드](docs/python_api_guide.md)를 참고하세요. 설치, 단일·일괄 실행, 전체 옵션, 반환값, OpenSlide 읽기와 제거 내역 확인 예제를 제공합니다.
+
 SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도와 호환되는 원본 조직 축소 레벨은 JPEG 압축 데이터를 유지합니다. 더 작은 미리보기 레벨만 생성하며 OpenSlide의 `get_thumbnail()`을 사용할 수 있습니다.
 
 ## Windows EXE
+
+1.5.0: 내보내기 완료 후 **익명화 내역** 탭에서 파일별 실제 처리 결과를 확인합니다. 설명문·소프트웨어·저장 일시·문서 이름·작성자·호스트·ICC와 OpenSlide 부속 이미지의 존재 여부를 확인하고, 출력 TIFF 태그와 비교합니다. 제거 확인/보존/원본에 없음/비교 불가/별도 검토 필요를 구분합니다. 원본 설명문은 새로운 기술 정보로 작성했다고 표시합니다. 파일명·CSV 파일명 선택과 영상·ICC 검토 상태도 표시합니다.
+
+내역에는 개인정보 값이나 임의의 원본 필드 이름을 복사하지 않습니다. 원본 TIFF에서 출력에 없는 태그 번호와 상태만 API의 `anonymization_audit`, CSV의 같은 이름 열에 JSON으로 보존합니다. CSV 전용 작업은 영상 제거 검증을 하지 않으므로 이 열이 비어 있습니다. JPEG APP/COM은 제외 정책 적용으로 표시하며 원본 존재 여부나 개수를 측정했다고 주장하지 않습니다. 비교 범위는 최상위 TIFF IFD와 OpenSlide 부속 이미지이며 환자정보 필드 탐지·영상 OCR 결과가 아닙니다.
 
 1.4.0: 제공된 MeDIAuto 로고와 아이콘을 창·EXE에 적용했습니다. 왼쪽 파일 목록, 오른쪽 내보내기 설정/슬라이드 정보 탭, 아래 출력 경로와 실행 버튼으로 화면을 정리했습니다. 작은 창에서는 설정만 스크롤할 수 있습니다. 로고 파일은 EXE에 포함되며 별도 logo 폴더 없이 실행됩니다.
 
@@ -12,7 +18,7 @@ SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도�
 
 ICC에는 색상 정보 외의 설명·제조사 등 부가정보가 있을 수 있습니다. 그대로 복사하므로 포함한 결과는 `icc_review_required=True`, `metadata_clean=False` 및 ICC 검토 필요 상태로 기록합니다. ICC 내용을 자동 익명화했다고 주장하지 않습니다. 기존 TIFF 개인정보 태그·라벨·매크로 제거는 유지합니다. CSV에 `source_vendor`, `icc_profile_copied`, `icc_review_required`가 추가됩니다.
 
-`release/WSI_Anonymization-1.4.0-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
+`release/WSI_Anonymization-1.5.0-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
 
 **출력 파일명을 익명 이름으로 변경**은 기본 체크입니다. 해제하면 원본 이름에 `.tiff` 확장자를 붙이며 중복 이름은 `_2`, `_3` 등을 붙입니다. 기존 파일은 덮어쓰지 않습니다. 원본 파일명에 식별자가 있으면 결과 파일명에도 남습니다. CSV의 원본 파일명 포함 옵션과는 독립적입니다. API에서는 `rename_output=False`, CLI에서는 `--keep-filename`을 사용합니다.
 

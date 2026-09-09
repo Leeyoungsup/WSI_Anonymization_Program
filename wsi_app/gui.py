@@ -31,6 +31,29 @@ def configure_qt():
     QCoreApplication.setLibraryPaths([str(plugins)])
 
 
+def audit_lines(audit):
+    if not audit:
+        return []
+    names = {"description": "원본 설명문", "software": "소프트웨어 태그 (305)", "datetime": "저장 일시 태그 (306)",
+             "document_name": "문서 이름 태그 (269)", "artist": "작성자 태그 (315)", "host": "호스트 태그 (316)", "icc": "ICC 프로파일",
+             "label": "라벨 이미지", "macro": "매크로 이미지", "thumbnail": "원본 썸네일", "other": "기타 부속 이미지",
+             "filename": "출력 파일명", "csv_filename": "CSV 원본 파일명", "pixels": "영상 속 개인정보",
+             "icc_review": "ICC 내부 정보", "jpeg_app_com": "JPEG APP/COM 부가정보"}
+    states = {"removed": "제거 확인", "rewritten": "원본 내용 제외 · 새 기술 정보로 작성",
+              "retained": "보존", "not_present": "원본에 없음", "not_checked": "비교 불가",
+              "renamed": "익명 이름으로 변경", "excluded": "포함 안 함", "not_exported": "CSV 저장 안 함",
+              "user_reviewed": "사용자 검토 확인 (자동 검증 아님)", "review_required": "별도 검토 필요",
+              "not_applicable": "해당 없음", "excluded_by_policy": "출력 제외 정책 적용 · 원본 존재 여부 미집계"}
+    lines = ["", "익명화 처리 내역"]
+    for entry in audit["entries"]:
+        lines.append(f"• {names[entry['item']]}: {states[entry['status']]}")
+    codes = audit.get("removed_tag_codes", [])
+    if audit.get("tag_comparison_available"):
+        lines.append("출력에 없는 원본 TIFF 태그: " + (", ".join(map(str, codes)) or "없음"))
+    lines.extend(["", "※ '원본에 없음'은 해당 TIFF 태그/OpenSlide 항목 기준입니다. 설명문 안의 개별 환자정보는 분석하지 않습니다. 완전한 익명화 인증이 아닙니다."])
+    return lines
+
+
 def technical_lines(data):
     def number(value):
         return f"{value:.6g}" if value is not None else "정보 없음"
@@ -44,7 +67,7 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MeDIAuto Anonymization · 1.4.0")
+        self.setWindowTitle("MeDIAuto Anonymization · 1.5.0")
         self.setWindowIcon(QIcon(str(ASSET_ROOT / "icon.png")))
         self.resize(1240, 900)
         self.setMinimumSize(1050, 760)
@@ -195,6 +218,10 @@ class Window(QMainWindow):
         settings_scroll.setWidget(self.options_box)
         self.side_tabs.addTab(settings_scroll, "내보내기 설정")
         self.side_tabs.addTab(panel, "슬라이드 정보")
+        self.audit_details = QTextEdit()
+        self.audit_details.setReadOnly(True)
+        self.audit_details.setPlaceholderText("TIFF 내보내기가 완료되면 파일별 제거·보존 내역을 표시합니다.")
+        self.side_tabs.addTab(self.audit_details, "익명화 내역")
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("출력 폴더"))
         default_output = Path(QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)) / "WSI Exports" if FROZEN else ROOT / "output"
@@ -312,6 +339,7 @@ class Window(QMainWindow):
         self.empty_state.show()
         self.preview.clear()
         self.details.clear()
+        self.audit_details.clear()
         self.reviewed.setChecked(False)
         self.progress.setValue(0)
         self.status.setText("목록을 비웠습니다.")
@@ -358,6 +386,8 @@ class Window(QMainWindow):
                 control.setEnabled(True)
             self.cancel_button.setEnabled(False)
             self.update_options()
+            if self.action == "copy" and self.completed:
+                self.side_tabs.setCurrentIndex(2)
             prefix = "중지됨" if self.stop_requested else "작업 종료"
             self.status.setText(f"{prefix} · {self.completed}개 처리, {self.failed}개 실패" +
                                (" · 선택 항목의 저장 결과를 확인하세요." if self.action == "copy" else ""))
@@ -474,6 +504,7 @@ class Window(QMainWindow):
 
     def show_selection(self):
         row = self.table.currentRow()
+        self.audit_details.clear()
         self.preview.clear()
         if row in self.previews:
             pixmap = QPixmap()
@@ -491,6 +522,7 @@ class Window(QMainWindow):
         report = data.get("report", data)
         if "report" in data:
             if report["format"] == "csv-only":
+                self.audit_details.setPlainText("CSV 전용 저장: 영상 익명화·제거 검증을 수행하지 않았습니다.")
                 self.details.setPlainText("\n".join(["슬라이드 정보 CSV 저장 완료", "영상 변환·픽셀 검증은 수행하지 않았습니다.",
                     *technical_lines(report.get("technical_metadata", {})),
                     f"영상 크기: {report['level_dimensions'][0]}", f"저장 위치: {data['directory']}",
@@ -510,6 +542,7 @@ class Window(QMainWindow):
                        if report.get("icc_profile_copied") else "ICC: 미포함 (원본에 없거나 제외 선택)"),
                 "", f"저장 위치: {data['directory']}",
                 "기술 정보: " + (Path(data['csv_path']).name if data.get("csv_path") else "CSV 저장 안 함")]))
+            self.audit_details.setPlainText("\n".join(audit_lines(report.get("anonymization_audit"))))
             return
         slide = report.get("openslide", {})
         if slide.get("thumbnail_skip_reason"):

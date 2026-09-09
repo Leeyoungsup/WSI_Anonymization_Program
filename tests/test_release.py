@@ -53,6 +53,9 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     assert preserved["report"]["preserved_levels"] == 2
     assert preserved["report"]["generated_levels"] == 1
     assert preserved["report"]["thumbnail_verified"] is True
+    audit = preserved["report"]["anonymization_audit"]
+    assert next(e for e in audit["entries"] if e["item"] == "description")["status"] == "rewritten"
+    assert "PATIENT_SENTINEL" not in json.dumps(audit)
     assert preserved["report"]["objective_power"] == 40
     with openslide.OpenSlide(preserved["file"]) as slide:
         assert slide.properties["openslide.objective-power"] == "40"
