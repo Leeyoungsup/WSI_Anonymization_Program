@@ -2,7 +2,7 @@
   "version": "1.6.0",
   "platform": "Windows x64",
   "python": "3.12.12 | packaged by Anaconda, Inc. | (main, Oct 21 2025, 20:05:38) [MSC v.1929 64 bit (AMD64)]",
-  "built_at_utc": "2026-09-09T02:11:39.485662+00:00",
+  "built_at_utc": "2026-09-09T02:34:52.053799+00:00",
   "exe_sha256": "235ea7b94d3ac7f667a0841d92b72ba161e8a3b09953ea7d61eb05cff8a7eea6",
   "packages": {
     "openslide-python": "1.4.6",
@@ -36,7 +36,7 @@
     "wsi_app\\worker.py": "21561f3c140c1a0a3e0eb2806f40f29109ea4e35fdd98d9047ae884c3ce0beb1",
     "tools\\inspect_samples.py": "be707a57620703663fcbf788929d4aa0050589f1f303cd0a5916e4c106ac46e9",
     "tools\\check_openslide.py": "cb5218dc6d9b54dc328a78ad9ca49487f572c29f91de1c21ca7cfaaee44a602a",
-    "tools\\build_release.py": "cbb455e8c3fa1b075deb7e1b30f09aa8fa2fbc426a10b793cc370d77d8e9a874",
+    "tools\\build_release.py": "aaabd37f6477b15edcbd18aac522a34f93d86e10189a645e1511435ea2c71183",
     "docs\\release_readme.txt": "ee2e1813b2b108a5979e3541e1027b58ec738180398af52cd213d3651de1f27a",
     "logo\\logo.png": "50b989f8932357b1fd23885e8ddb935ff5b1c4a338cc6bfb95af7607969905d0",
     "logo\\icon.png": "474b1375c2bdfa2adabb85d20f99ccd8e13b043a0dcff7c646e6394360511524"

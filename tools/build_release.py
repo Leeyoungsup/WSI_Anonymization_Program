@@ -84,9 +84,19 @@ def main():
     }, indent=2), encoding="utf-8")
     archive_path = ROOT / "release" / (NAME + ".zip")
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        license_index = {}
         for path in sorted(folder.rglob("*")):
             if path.is_file():
-                archive.write(path, path.relative_to(folder.parent))
+                relative = path.relative_to(folder)
+                # Keep Explorer extraction paths short, including bundled notices.
+                # Preserve every license verbatim and record its original location.
+                if relative.parts[0] == "THIRD_PARTY_LICENSES":
+                    short_name = f"{len(license_index) + 1:04d}.txt"
+                    license_index[short_name] = relative.as_posix()
+                    archive.write(path, "WSI/licenses/" + short_name)
+                else:
+                    archive.write(path, "WSI/" + relative.as_posix())
+        archive.writestr("WSI/licenses/INDEX.json", json.dumps(license_index, indent=2))
     (ROOT / "release" / (NAME + ".sha256")).write_text(
         hashlib.sha256(archive_path.read_bytes()).hexdigest() + "  " + archive_path.name + "\n", encoding="ascii")
     print(archive_path)
