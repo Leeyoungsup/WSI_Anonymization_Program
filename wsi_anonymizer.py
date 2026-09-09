@@ -126,16 +126,24 @@ def _removal_audit(before, after, *, rename_output, include_filename, export_csv
                        ("document_name", 269), ("artist", 315), ("host", 316), ("icc", 34675)):
         status = "not_checked" if not checked else "not_present" if code not in source else (
             "removed" if code not in output else "retained" if name == "icc" else "rewritten")
-        entries.append({"item": name, "status": status})
+        entries.append({"item": name, "status": status, "tag_code": code,
+                        "before": "unknown" if not checked else "present" if code in source else "absent",
+                        "after": "technical_metadata" if name == "description" and code in output else
+                                 "present" if code in output else "absent"})
     for name in ("label", "macro", "thumbnail", "other"):
         count = before["associated"].count(name)
-        entries.append({"item": name, "status": "removed" if count else "not_present", "count": count})
+        entries.append({"item": name, "status": "removed" if count else "not_present", "count": count,
+                        "before": "present" if count else "absent", "after": "absent"})
     entries.extend([
-        {"item": "filename", "status": "renamed" if rename_output else "retained"},
-        {"item": "csv_filename", "status": "not_exported" if not export_csv else "retained" if include_filename else "excluded"},
-        {"item": "pixels", "status": "user_reviewed" if reviewed else "review_required"},
-        {"item": "icc_review", "status": "review_required" if icc else "not_applicable"},
-        {"item": "jpeg_app_com", "status": "excluded_by_policy"},
+        {"item": "filename", "status": "renamed" if rename_output else "retained",
+         "before": "source_filename", "after": "anonymous_filename" if rename_output else "source_stem_tiff"},
+        {"item": "csv_filename", "status": "not_exported" if not export_csv else "retained" if include_filename else "excluded",
+         "before": "source_filename", "after": "not_exported" if not export_csv else "source_filename" if include_filename else "empty"},
+        {"item": "pixels", "status": "user_reviewed" if reviewed else "review_required",
+         "before": "not_assessed", "after": "user_reviewed" if reviewed else "review_required"},
+        {"item": "icc_review", "status": "review_required" if icc else "not_applicable",
+         "before": "not_assessed", "after": "review_required" if icc else "not_applicable"},
+        {"item": "jpeg_app_com", "status": "excluded_by_policy", "before": "not_counted", "after": "excluded_by_policy"},
     ])
     return {"scope": "top-level TIFF tag IDs and OpenSlide associated images; no patient-field detection",
             "entries": entries, "tag_comparison_available": checked,

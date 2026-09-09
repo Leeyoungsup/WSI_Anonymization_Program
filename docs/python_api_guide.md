@@ -1,6 +1,6 @@
 # Python 함수 사용 가이드
 
-현재 코드와 v1.5.0 기능 기준입니다. EXE나 GUI를 실행하지 않고 `anonymize_wsi()`를 호출할 수 있습니다. 함수는 변환·검증·저장을 마친 뒤 결과 딕셔너리를 반환합니다.
+현재 코드와 v1.6.0 기능 기준입니다. EXE나 GUI를 실행하지 않고 `anonymize_wsi()`를 호출할 수 있습니다. 함수는 변환·검증·저장을 마친 뒤 결과 딕셔너리를 반환합니다.
 
 ## 1. 필요한 파일과 실행 환경
 
@@ -235,6 +235,8 @@ except ExportCancelled:
 `metadata_clean=True`여도 영상 속 식별자, 원본 이름을 유지한 출력 파일명, 원본 이름을 포함한 CSV까지 익명이라고 보장하지 않습니다.
 
 ## 9. 제거 내역 확인
+
+v1.6.0부터 각 `entries` 항목에 `before`, `after` 상태 코드가 추가됩니다. 예: 설명문은 `present → technical_metadata`, 제거된 날짜 태그는 `present → absent`입니다. `tag_code`가 있는 항목은 해당 TIFF 태그 번호를 나타냅니다. 이 필드는 원본 텍스트 값이 아니라 존재·처리 상태입니다. GUI에서 보이는 실제 원본 설명문 등은 GUI 메모리에만 있으며 API 반환값·CSV에 포함되지 않습니다.
 
 ```python
 # 앞서 정상 반환된 result 사용

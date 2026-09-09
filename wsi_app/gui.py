@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 import PySide6
+import tifffile
 from PySide6.QtCore import QCoreApplication, QProcess, Qt, QUrl, QStandardPaths, QTimer
 from PySide6.QtGui import QDesktopServices, QPixmap, QIcon
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -31,9 +32,40 @@ def configure_qt():
     QCoreApplication.setLibraryPaths([str(plugins)])
 
 
-def audit_lines(audit):
-    if not audit:
-        return []
+def source_display_snapshot(path):
+    """GUI-memory-only values; never attach this snapshot to worker jobs/reports."""
+    values = {"filename": path.name, "csv_filename": path.name}
+    try:
+        with tifffile.TiffFile(path) as tif:
+            fields = {270: "description", 305: "software", 306: "datetime", 269: "document_name",
+                      315: "artist", 316: "host", 34675: "icc"}
+            for code, name in fields.items():
+                parts = []
+                for index, page in enumerate(tif.pages):
+                    if index >= 64:
+                        parts.append("추가 IFD 값은 생략했습니다.")
+                        break
+                    tag = page.tags.get(code)
+                    if tag is None:
+                        continue
+                    if code == 34675:
+                        value = f"ICC 프로파일 {tag.count:,} bytes (바이너리 원문 표시 안 함)"
+                    elif int(tag.dtype) == 2:
+                        tif.filehandle.seek(tag.valueoffset)
+                        value = tif.filehandle.read(min(tag.count, 4096)).decode("utf-8", errors="replace").rstrip("\x00")
+                        if tag.count > 4096:
+                            value += "\n[4 KiB 이후 생략]"
+                    else:
+                        value = "문자열 형식이 아닌 태그 · 원문 표시 안 함"
+                    parts.append(f"IFD {index}: {value}")
+                if parts:
+                    values[name] = "\n\n".join(parts)
+    except (OSError, ValueError, tifffile.TiffFileError):
+        values["_notice"] = "원본 태그 값을 읽지 못했습니다. 존재·처리 상태만 표시합니다."
+    return values
+
+
+def audit_labels():
     names = {"description": "원본 설명문", "software": "소프트웨어 태그 (305)", "datetime": "저장 일시 태그 (306)",
              "document_name": "문서 이름 태그 (269)", "artist": "작성자 태그 (315)", "host": "호스트 태그 (316)", "icc": "ICC 프로파일",
              "label": "라벨 이미지", "macro": "매크로 이미지", "thumbnail": "원본 썸네일", "other": "기타 부속 이미지",
@@ -44,6 +76,13 @@ def audit_lines(audit):
               "renamed": "익명 이름으로 변경", "excluded": "포함 안 함", "not_exported": "CSV 저장 안 함",
               "user_reviewed": "사용자 검토 확인 (자동 검증 아님)", "review_required": "별도 검토 필요",
               "not_applicable": "해당 없음", "excluded_by_policy": "출력 제외 정책 적용 · 원본 존재 여부 미집계"}
+    return names, states
+
+
+def audit_lines(audit):
+    if not audit:
+        return []
+    names, states = audit_labels()
     lines = ["", "익명화 처리 내역"]
     for entry in audit["entries"]:
         lines.append(f"• {names[entry['item']]}: {states[entry['status']]}")
@@ -67,11 +106,12 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MeDIAuto Anonymization · 1.5.0")
+        self.setWindowTitle("MeDIAuto Anonymization · 1.6.0")
         self.setWindowIcon(QIcon(str(ASSET_ROOT / "icon.png")))
         self.resize(1240, 900)
         self.setMinimumSize(1050, 760)
         self.paths, self.results, self.previews = [], {}, {}
+        self.source_display_values = {}
         self.queue = []
         self.process = None
         self.buffer = b""
@@ -218,10 +258,30 @@ class Window(QMainWindow):
         settings_scroll.setWidget(self.options_box)
         self.side_tabs.addTab(settings_scroll, "내보내기 설정")
         self.side_tabs.addTab(panel, "슬라이드 정보")
+        audit_panel = QWidget()
+        audit_layout = QVBoxLayout(audit_panel)
+        self.audit_notice = QLabel("원본 값은 화면에만 표시하며 CSV에는 저장하지 않습니다.")
+        self.audit_notice.setWordWrap(True)
+        audit_layout.addWidget(self.audit_notice)
+        self.audit_table = QTableWidget(0, 3)
+        self.audit_table.setHorizontalHeaderLabels(["항목", "원본", "익명화 결과"])
+        self.audit_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.audit_table.verticalHeader().setVisible(False)
+        self.audit_table.verticalHeader().setDefaultSectionSize(40)
+        self.audit_table.setWordWrap(False)
+        self.audit_table.setShowGrid(False)
+        self.audit_table.setAlternatingRowColors(True)
+        self.audit_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.audit_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.audit_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.audit_table.itemSelectionChanged.connect(self.show_audit_row)
+        audit_layout.addWidget(self.audit_table, 1)
         self.audit_details = QTextEdit()
         self.audit_details.setReadOnly(True)
+        self.audit_details.setMaximumHeight(160)
         self.audit_details.setPlaceholderText("TIFF 내보내기가 완료되면 파일별 제거·보존 내역을 표시합니다.")
-        self.side_tabs.addTab(self.audit_details, "익명화 내역")
+        audit_layout.addWidget(self.audit_details)
+        self.side_tabs.addTab(audit_panel, "익명화 내역")
         output_row = QHBoxLayout()
         output_row.addWidget(QLabel("출력 폴더"))
         default_output = Path(QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)) / "WSI Exports" if FROZEN else ROOT / "output"
@@ -335,11 +395,13 @@ class Window(QMainWindow):
         self.paths.clear()
         self.results.clear()
         self.previews.clear()
+        self.source_display_values.clear()
         self.table.setRowCount(0)
         self.empty_state.show()
         self.preview.clear()
         self.details.clear()
         self.audit_details.clear()
+        self.audit_table.setRowCount(0)
         self.reviewed.setChecked(False)
         self.progress.setValue(0)
         self.status.setText("목록을 비웠습니다.")
@@ -366,6 +428,9 @@ class Window(QMainWindow):
             self.status.setText("출력 폴더를 선택하세요.")
             return
         self.action = action
+        self.source_display_values.clear()
+        self.audit_table.setRowCount(0)
+        self.audit_details.clear()
         self.side_tabs.setCurrentIndex(1)
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f") if action == "copy" else None
         self.queue = list(range(len(self.paths)))
@@ -393,6 +458,8 @@ class Window(QMainWindow):
                                (" · 선택 항목의 저장 결과를 확인하세요." if self.action == "copy" else ""))
             return
         row = self.queue.pop(0)
+        if self.action == "copy" and self.export_image.isChecked():
+            self.source_display_values[row] = source_display_snapshot(self.paths[row])
         self.active_row = row
         self.had_result = False
         self.buffer = b""
@@ -502,9 +569,64 @@ class Window(QMainWindow):
         old.deleteLater()
         self.next_file()
 
+    def populate_audit(self, report, row):
+        audit = report.get("anonymization_audit")
+        if not audit:
+            return
+        names, states = audit_labels()
+        source_values = self.source_display_values.get(row, {})
+        descriptions = {"present": "있음", "absent": "없음", "unknown": "비교 불가",
+                        "source_filename": "원본 파일명", "not_assessed": "자동 분석하지 않음",
+                        "not_counted": "존재 여부 미집계"}
+        self.audit_notice.setText("원본 값은 화면에만 표시합니다. 항목을 선택하면 아래에서 자세히 볼 수 있습니다.\n"
+                                 + source_values.get("_notice", "'없음'은 해당 TIFF 태그/OpenSlide 항목 기준입니다."))
+        for entry in audit["entries"]:
+            name = entry["item"]
+            original = descriptions.get(entry.get("before"), "이전 결과 · 원본 상태 미기록")
+            if entry.get("before") in ("present", "source_filename") and name in source_values:
+                original = source_values[name]
+            outcome = states[entry["status"]]
+            if entry.get("after") == "absent":
+                outcome = "없음 · 제거 확인" if entry["status"] == "removed" else "없음"
+            if entry.get("after") == "technical_metadata":
+                outcome = "기술 정보로 재작성\n" + json.dumps(report.get("technical_metadata", {}), ensure_ascii=False, indent=2)
+            if name == "filename" and report.get("output_path"):
+                outcome += "\n" + Path(report["output_path"]).name
+            if name == "csv_filename":
+                if entry.get("after") == "source_filename" and name in source_values:
+                    outcome += "\n" + source_values[name]
+                elif entry.get("after") == "empty":
+                    outcome = "빈칸으로 저장"
+            index = self.audit_table.rowCount()
+            self.audit_table.insertRow(index)
+            for column, value in enumerate((names[name], original, outcome)):
+                cell = QTableWidgetItem(value.replace("\n", " ")[:100])
+                cell.setData(Qt.UserRole, value)
+                self.audit_table.setItem(index, column, cell)
+        known_codes = {entry.get("tag_code") for entry in audit["entries"]}
+        extra_codes = [code for code in audit.get("removed_tag_codes", []) if code not in known_codes]
+        if extra_codes:
+            index = self.audit_table.rowCount()
+            self.audit_table.insertRow(index)
+            for column, value in enumerate(("추가 TIFF 태그", ", ".join(map(str, extra_codes)), "출력에서 제거 확인 (태그 번호 기준)")):
+                cell = QTableWidgetItem(value[:100])
+                cell.setData(Qt.UserRole, value)
+                self.audit_table.setItem(index, column, cell)
+        if self.audit_table.rowCount():
+            self.audit_table.selectRow(0)
+
+    def show_audit_row(self):
+        row = self.audit_table.currentRow()
+        if row < 0 or any(self.audit_table.item(row, col) is None for col in range(3)):
+            self.audit_details.clear()
+            return
+        name, original, outcome = [self.audit_table.item(row, col).data(Qt.UserRole) for col in range(3)]
+        self.audit_details.setPlainText(f"{name}\n\n원본\n{original}\n\n익명화 결과\n{outcome}")
+
     def show_selection(self):
         row = self.table.currentRow()
         self.audit_details.clear()
+        self.audit_table.setRowCount(0)
         self.preview.clear()
         if row in self.previews:
             pixmap = QPixmap()
@@ -542,7 +664,7 @@ class Window(QMainWindow):
                        if report.get("icc_profile_copied") else "ICC: 미포함 (원본에 없거나 제외 선택)"),
                 "", f"저장 위치: {data['directory']}",
                 "기술 정보: " + (Path(data['csv_path']).name if data.get("csv_path") else "CSV 저장 안 함")]))
-            self.audit_details.setPlainText("\n".join(audit_lines(report.get("anonymization_audit"))))
+            self.populate_audit(report, row)
             return
         slide = report.get("openslide", {})
         if slide.get("thumbnail_skip_reason"):
@@ -574,6 +696,9 @@ class Window(QMainWindow):
             self.status.setText("현재 파일 완료 후 닫을 수 있습니다. 중지를 요청했습니다.")
             event.ignore()
         else:
+            self.source_display_values.clear()
+            self.audit_table.setRowCount(0)
+            self.audit_details.clear()
             event.accept()
 
     def dragEnterEvent(self, event):

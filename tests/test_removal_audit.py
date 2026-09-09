@@ -36,6 +36,11 @@ class AuditTests(unittest.TestCase):
                 audit = result["anonymization_audit"]
                 states = {entry["item"]: entry["status"] for entry in audit["entries"]}
                 self.assertEqual(states["description"], "rewritten")
+                entries = {entry["item"]: entry for entry in audit["entries"]}
+                self.assertEqual(entries["description"]["before"], "present")
+                self.assertEqual(entries["description"]["after"], "technical_metadata")
+                self.assertEqual(entries["software"]["after"], "absent")
+                self.assertEqual(entries["artist"]["before"], "absent")
                 for name in ("software", "datetime", "label", "macro", "thumbnail"):
                     self.assertEqual(states[name], "removed")
                 self.assertEqual(states["artist"], "not_present")

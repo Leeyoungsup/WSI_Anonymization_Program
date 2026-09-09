@@ -36,8 +36,9 @@ with tempfile.TemporaryDirectory(prefix="release_gui_") as directory:
         assert window.failed==0, window.results
         result=window.results[0]
         assert result["report"]["compression"]=="jpeg-preserved"
-        assert "익명화 처리 내역" in window.audit_details.toPlainText()
-        assert "원본에 없음" in window.audit_details.toPlainText()
+        assert window.audit_table.rowCount() >= 10
+        assert window.audit_table.horizontalHeaderItem(1).text() == "원본"
+        assert "익명화 결과" in window.audit_details.toPlainText()
         assert all(label in window.details.toPlainText() for label in ("Magnification:", "Pixel Size:", "MPP:", "Physical Size:"))
         assert Path(result["file"]).is_file()
         with Path(result["csv_path"]).open(encoding="utf-8-sig",newline="") as stream:
