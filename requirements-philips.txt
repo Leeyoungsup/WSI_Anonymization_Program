@@ -1,0 +1,4 @@
+# Separate Python 3.7 x64 environment; do not install in yslee.
+# Philips SDK 2.0 Windows modules must be installed separately from your SDK.
+numpy==1.21.6
+Pillow==9.5.0

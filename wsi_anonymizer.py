@@ -33,12 +33,165 @@ import shutil
 import struct
 import tempfile
 import uuid
+import sys
+import subprocess
+import threading
+import queue
+import mmap
+import base64
 from collections.abc import Callable, Sequence
 
 import numpy as np
 import tifffile
 
 __all__ = ["anonymize_wsi", "ExportCancelled"]
+
+PHILIPS_EXTENSIONS = {".isyntax", ".i2syntax"}
+
+
+class PhilipsSlide:
+    """OpenSlide-shaped reader backed by an isolated Python 3.7 SDK process.
+
+    Set PHILIPS_PYTHON to the SDK environment's python.exe, or supply a portable
+    philips/PhilipsBridge.exe next to this module/application.
+    """
+    def __init__(self, path, cancelled=None):
+        if os.name != "nt":
+            raise ValueError("This Philips bridge requires Windows x64")
+        self._cancelled = cancelled
+        self._process = None
+        root = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+        helper = root / "philips" / "PhilipsBridge.exe"
+        portable_python = root / "philips" / "python.exe"
+        configured = os.environ.get("PHILIPS_PYTHON")
+        python = Path(configured) if configured else Path.home() / ".conda/envs/philips-sdk-py37/python.exe"
+        script = Path(__file__).resolve().parent / "philips_bridge/export_server.py"
+        if helper.is_file() and not configured:
+            command = [str(helper)]
+        elif portable_python.is_file() and not configured:
+            command = [str(portable_python), "-I", "-u", str(root / "philips/bridge/export_server.py")]
+        elif python.is_file() and script.is_file():
+            command = [str(python), "-u", str(script)]
+        else:
+            raise ValueError("Philips SDK reader is missing. Install the Python 3.7 SDK environment and set PHILIPS_PYTHON, or use the Philips-enabled release.")
+        env = os.environ.copy()
+        for key in ("PYTHONHOME", "PYTHONPATH", "CONDA_PREFIX", "_MEIPASS2"):
+            env.pop(key, None)
+        env["PYTHONNOUSERSITE"] = "1"
+        self._scratch = tempfile.TemporaryDirectory(prefix="wsi_philips_")
+        env["WSI_PHILIPS_SCRATCH"] = self._scratch.name
+        self._messages = queue.Queue()
+        try:
+            self._process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+        except BaseException:
+            self._scratch.cleanup()
+            raise
+        process = self._process
+        def receive():
+            try:
+                for line in process.stdout:
+                    self._messages.put(line)
+            except (OSError, ValueError):
+                pass
+            finally:
+                self._messages.put(None)
+        threading.Thread(target=receive, daemon=True).start()
+        try:
+            data = self._request({"command": "open", "path": str(Path(path).resolve())})
+            self.dimensions = tuple(data["dimensions"])
+            self.level_dimensions = tuple(tuple(d) for d in data["level_dimensions"])
+            self.level_downsamples = tuple(data["level_downsamples"])
+            self.level_count = len(self.level_dimensions)
+            self.properties = data["properties"]
+            self.associated_images = dict.fromkeys(data["associated_images"])
+            self.icc = base64.b64decode(data["icc"], validate=True) if data["icc"] else None
+            self.display_origin = data["display_origin"]
+        except BaseException:
+            self.close()
+            raise
+
+    def _request(self, message):
+        import time
+        try:
+            self._process.stdin.write(json.dumps(message, ensure_ascii=True) + "\n")
+            self._process.stdin.flush()
+        except (OSError, ValueError):
+            raise ValueError("Philips SDK process stopped") from None
+        deadline = time.monotonic() + 120
+        while True:
+            if self._cancelled and self._cancelled():
+                raise ExportCancelled("Export cancelled")
+            if time.monotonic() > deadline:
+                raise ValueError("Philips SDK response timed out")
+            try:
+                line = self._messages.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if line is None:
+                raise ValueError("Philips SDK process stopped; check its Python 3.7 runtime and SDK dependencies")
+            try:
+                response = json.loads(line)
+            except ValueError:
+                continue  # Discard native diagnostic text, never persist it.
+            if not response.get("ok"):
+                raise ValueError("Philips SDK could not read this file/region. The file may be damaged or unsupported by SDK 2.0.")
+            return response.get("data", {})
+
+    def read_region(self, location, level, size):
+        from PIL import Image
+        width, height = map(int, size)
+        if not (0 < width <= 4096 and 0 < height <= 4096):
+            raise ValueError("Philips region exceeds bounded buffer")
+        name = "Local\\wsi_" + uuid.uuid4().hex
+        count = width * height * 4
+        with mmap.mmap(-1, count, tagname=name) as memory:
+            reply = self._request({"command": "region", "location": list(map(int, location)),
+                "level": int(level), "size": [width, height], "memory": name})
+            if reply["bytes"] != count:
+                raise ValueError("Philips SDK returned an unexpected pixel buffer")
+            image = Image.frombytes("RGBA", (width, height), memory[:])
+        if self.icc:
+            image.info["icc_profile"] = self.icc
+        return image
+
+    def get_best_level_for_downsample(self, scale):
+        return max((i for i, d in enumerate(self.level_downsamples) if d <= scale), default=0)
+
+    def get_thumbnail(self, size):
+        from PIL import Image
+        level = self.get_best_level_for_downsample(max(self.dimensions[0]/size[0], self.dimensions[1]/size[1]))
+        while max(self.level_dimensions[level]) > 4096 and level < self.level_count - 1:
+            level += 1
+        with self.read_region((0, 0), level, self.level_dimensions[level]) as region:
+            result = region.convert("RGB")
+            result.thumbnail(size, Image.Resampling.LANCZOS)
+        return result
+
+    def close(self):
+        process = self._process
+        if process is not None:
+            try:
+                process.stdin.close()  # EOF lets the server release the SDK.
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+                process.wait()
+            finally:
+                process.stdout.close()
+                self._process = None
+                self._scratch.cleanup()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
+def _open_slide(path, openslide, cancelled=None):
+    return PhilipsSlide(path, cancelled) if Path(path).suffix.lower() in PHILIPS_EXTENSIONS else openslide.OpenSlide(str(path))
 
 CSV_FIELDS = (
     "original_filename", "output_filename", "source_format", "mpp_x_um", "mpp_y_um",
@@ -48,6 +201,7 @@ CSV_FIELDS = (
     "physical_width_mm", "physical_height_mm",
     "source_vendor", "icc_profile_copied", "icc_review_required",
     "anonymization_audit",
+    "source_representation", "source_origin_x_px", "source_origin_y_px",
 )
 
 
@@ -508,6 +662,59 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, appen
     return total
 
 
+def _write_jpeg(slide, target, mpp, boxes, tile_size, emit, description, icc):
+    """Encode tissue as JPEG Q90, then verify every compressed tile and decode."""
+    import imagecodecs
+    width, height = slide.dimensions
+    total = math.ceil(width / tile_size) * math.ceil(height / tile_size)
+    if shutil.disk_usage(target.parent).free < total * tile_size * tile_size * 3 + 64 * 1024**2:
+        raise OSError("Not enough space for JPEG TIFF export")
+    digest = hashlib.sha256()
+    def tiles():
+        count = 0
+        for y in range(0, height, tile_size):
+            for x in range(0, width, tile_size):
+                emit("write", count, total)
+                rgb = _rgb_tile(slide, x, y, tile_size, boxes)
+                encoded = imagecodecs.jpeg_encode(rgb, level=90, subsampling=(2, 2))
+                header, offset, _, _ = _jpeg_header(encoded)
+                encoded = header + _jpeg_entropy(encoded[offset:]) + b"\xff\xd9"
+                digest.update(struct.pack("<Q", len(encoded)))
+                digest.update(encoded)
+                yield encoded
+                count += 1
+        emit("write", total, total)
+    with tifffile.TiffWriter(target, bigtiff=True) as writer:
+        writer.write(tiles(), shape=(height, width, 3), dtype=np.uint8, tile=(tile_size, tile_size),
+            photometric="ycbcr", compression="jpeg", subsampling=(2, 2),
+            metadata=None, description=description, software=False, datetime=False,
+            iccprofile=icc, subfiletype=0,
+            resolution=None if mpp is None else (10000 / mpp[0], 10000 / mpp[1]),
+            resolutionunit="CENTIMETER" if mpp else "NONE")
+    expected = digest.digest()
+    digest = hashlib.sha256()
+    allowed = {254, 256, 257, 258, 259, 262, 277, 282, 283, 284, 296, 322, 323, 324, 325, 530, 532}
+    with tifffile.TiffFile(target) as tif:
+        if len(tif.pages) != 1 or not tif.is_bigtiff:
+            raise ValueError("Unexpected JPEG TIFF structure")
+        page = tif.pages[0]
+        _validate_metadata(page, allowed, description, icc)
+        if len(page.dataoffsets) != total:
+            raise ValueError("Missing JPEG tiles")
+        for index, (offset, size) in enumerate(zip(page.dataoffsets, page.databytecounts)):
+            emit("verify", index, total)
+            tif.filehandle.seek(offset)
+            data = tif.filehandle.read(size)
+            digest.update(struct.pack("<Q", len(data)))
+            digest.update(data)
+            if imagecodecs.jpeg_decode(data).shape != (tile_size, tile_size, 3):
+                raise ValueError("JPEG tile decode failed")
+        if digest.digest() != expected:
+            raise ValueError("JPEG compressed payload changed")
+    emit("verify", total, total)
+    return total
+
+
 def _append_overview(target, openslide, mpp, compression, notify):
     """Append a 4x reduced tiled level from the sanitized output, bounded buffers."""
     import imagecodecs
@@ -539,7 +746,7 @@ def _append_overview(target, openslide, mpp, compression, notify):
                         rgb[:, max(0, width - x):] = 255
                     if y + tile > height:
                         rgb[max(0, height - y):] = 255
-                    if compression == "preserve":
+                    if compression in ("preserve", "jpeg"):
                         data = imagecodecs.jpeg_encode(rgb, level=90, subsampling=(2, 2))
                         header, offset, _, _ = _jpeg_header(data)
                         data = header + _jpeg_entropy(data[offset:]) + b"\xff\xd9"
@@ -553,9 +760,9 @@ def _append_overview(target, openslide, mpp, compression, notify):
             raise OSError("Not enough space for pyramid overview")
         with tifffile.TiffWriter(target, append=True) as writer:
             writer.write(tiles(), shape=(height, width, 3), dtype=np.uint8, tile=(tile, tile),
-                         compression="jpeg" if compression == "preserve" else "deflate",
-                         photometric="ycbcr" if compression == "preserve" else "rgb",
-                         subsampling=(2, 2) if compression == "preserve" else None,
+                         compression="jpeg" if compression in ("preserve", "jpeg") else "deflate",
+                         photometric="ycbcr" if compression in ("preserve", "jpeg") else "rgb",
+                         subsampling=(2, 2) if compression in ("preserve", "jpeg") else None,
                          metadata=None, description=None, software=False, datetime=False, subfiletype=1,
                          resolution=None if mpp is None else (10000 / (mpp[0] * parent.dimensions[0] / width),
                                                               10000 / (mpp[1] * parent.dimensions[1] / height)),
@@ -570,7 +777,7 @@ def _append_overview(target, openslide, mpp, compression, notify):
             data = tif.filehandle.read(size)
             digest.update(struct.pack("<Q", len(data)))
             digest.update(data)
-            if compression == "preserve":
+            if compression in ("preserve", "jpeg"):
                 decoded = imagecodecs.jpeg_decode(data)
                 if decoded.shape != (tile, tile, 3):
                     raise ValueError("Pyramid JPEG tile decode failed")
@@ -670,6 +877,8 @@ def anonymize_wsi(
         Supports self-contained baseline YCbCr JPEG TIFF tiles and indexed NDPI
         with 1x1 component sampling, full restart rows, and compatible geometry.
         Other layouts raise ValueError. 'lossless' explicitly uses RGB/Deflate.
+        'jpeg' explicitly re-encodes SDK/OpenSlide RGB at JPEG quality 90, 4:2:0.
+        It adds lossy compression; it does not preserve Philips iSyntax coding.
     pyramid: True by default. Reuse compatible source tissue levels in preserve
         mode, then generate 4x overviews down to <=512 pixels on the longest edge.
         Additional overviews use JPEG quality 90 (or Deflate in lossless mode).
@@ -681,14 +890,14 @@ def anonymize_wsi(
         False leaves that CSV field empty; rename_output controls TIFF names.
     rename_output: use an anonymous UUID filename (default True); False keeps
         the source stem with .tiff. Collisions receive _2, _3, etc.; never overwrite.
-    redactions: (x, y, width, height), painted white; requires 'lossless' mode.
+    redactions: (x, y, width, height), painted white; requires 'lossless' or 'jpeg'.
     pixels_reviewed: caller confirms no identifiers remain outside supplied masks.
     preserve_mpp: copy only finite positive numeric microns-per-pixel calibration.
     preserve_icc: copy the original RGB ICC profile including its metadata.
         Defaults to False. If copied, metadata_clean=False and the report/CSV
         explicitly require separate ICC metadata review. Pixels are not transformed.
-    tile_size, workers: control the explicit 'lossless' path only; preserve mode
-        retains source coding geometry (apart from NDPI restart regrouping).
+    tile_size: controls 'lossless' and 'jpeg'. workers: controls Deflate encoding.
+        Preserve mode retains source coding geometry (apart from NDPI regrouping).
     progress: receives {stage, completed, total, percent}; no source identifiers.
     cancelled: cooperative callback evaluated between tiles; True aborts export.
 
@@ -727,10 +936,12 @@ def anonymize_wsi(
         raise ValueError("workers must be between 1 and 16")
     if not isinstance(pixels_reviewed, bool):
         raise TypeError("pixels_reviewed must be a boolean")
-    if compression not in ("preserve", "lossless"):
-        raise ValueError("compression must be preserve or lossless")
+    if compression not in ("preserve", "lossless", "jpeg"):
+        raise ValueError("compression must be preserve, lossless or jpeg")
     if compression == "preserve" and redactions:
         raise ValueError("Pixel redactions require compression=lossless; preserve mode never re-encodes")
+    if source.suffix.lower() in PHILIPS_EXTENSIONS and compression == "preserve" and export_image:
+        raise ValueError("Philips iSyntax/i2syntax cannot preserve JPEG coding data. Select compression='lossless' (SDK display RGB to Deflate).")
     openslide, dll = _openslide()
     temporary = None
     last_progress = [None]
@@ -751,7 +962,7 @@ def anonymize_wsi(
 
     try:
         stat_before = source.stat()
-        with openslide.OpenSlide(str(source)) as slide:
+        with _open_slide(source, openslide, cancelled) as slide:
             before_inventory = _inventory(source, slide) if export_image else None
             dimensions = [slide.dimensions]
             downsamples = [1.0]
@@ -771,6 +982,13 @@ def anonymize_wsi(
             technical = _technical_metadata(dimensions[0], mpp, objective, source_vendor)
             source_technical = _technical_metadata(dimensions[0], source_mpp, objective, source_vendor)
             physical = {key: source_technical[key] for key in ("physical_width_mm", "physical_height_mm")}
+            if isinstance(slide, PhilipsSlide):
+                rendering = {"source_representation": "Philips SDK display RGB 8-bit",
+                             "source_origin_x_px": slide.display_origin[0],
+                             "source_origin_y_px": slide.display_origin[1]}
+                technical.update(rendering)
+                source_technical.update(rendering)
+                physical.update(rendering)
             icc = None
             if preserve_icc and export_image:
                 with slide.read_region((0, 0), 0, (1, 1)) as region:
@@ -823,6 +1041,8 @@ def anonymize_wsi(
             temporary = Path(name)
             if compression == "preserve":
                 verified = _preserve_jpeg(source, temporary, dimensions, mpp, emit, description=description, icc=icc)
+            elif compression == "jpeg":
+                verified = _write_jpeg(slide, temporary, mpp, boxes, tile_size, emit, description, icc)
             else:
                 # Deflate worst-case can approach raw size, including edge padding.
                 required = int(total * tile_size * tile_size * 3 * 1.02) + 64 * 1024**2
@@ -935,6 +1155,10 @@ def anonymize_wsi(
             audit = _removal_audit(before_inventory, _inventory(temporary), rename_output=rename_output,
                                   include_filename=include_filename, export_csv=export_csv,
                                   icc=icc, reviewed=pixels_reviewed)
+            if isinstance(slide, PhilipsSlide):
+                audit["scope"] = "Philips SDK associated-image inventory; source XML excluded by policy; no patient-field detection"
+                audit["entries"].append({"item": "philips_metadata", "status": "excluded_by_policy",
+                    "before": "not_assessed", "after": "technical_metadata"})
             suffix = 1
             while True:
                 try:
@@ -962,20 +1186,26 @@ def anonymize_wsi(
                 "rename_output": rename_output,
                 "technical_metadata": technical,
                 "anonymization_audit": audit,
-                "mpp": list(mpp) if mpp else None, "compression": "jpeg-preserved" if compression == "preserve" else "deflate-lossless",
+                "mpp": list(mpp) if mpp else None,
+                "compression": {"preserve": "jpeg-preserved", "lossless": "deflate-lossless", "jpeg": "jpeg-reencoded-q90"}[compression],
+                "additional_lossy_compression": compression == "jpeg",
+                "jpeg_quality": 90 if compression == "jpeg" else None,
                 "all_output_tiles_verified": True, "verified_tiles": verified,
-                "verification": "compressed-sha256-and-all-tiles-decode" if compression == "preserve" else
+                "verification": "compressed-sha256-and-all-tiles-decode" if compression in ("preserve", "jpeg") else
                                 ("base-pixels-sha256-and-pyramid-compressed-sha256" if pyramid else "all-decoded-pixels-sha256"),
                 "source_output_pixel_regions_verified": 25 if compression == "preserve" else 0,
                 "source_metadata_copied": False, "associated_images_copied": False,
                 "source_compressed_payload_copied": compression == "preserve",
-                "jpeg_app_com_removed": compression == "preserve",
+                "jpeg_app_com_removed": compression in ("preserve", "jpeg"),
                 "reencoded": compression != "preserve" or generated_levels > 0,
                 "base_image_reencoded": compression != "preserve", "icc_profile_copied": bool(icc),
                 "icc_profile_bytes": len(icc) if icc else 0, "source_vendor": source_vendor,
-                "representation": "OpenSlide 2D RGB; not all focal planes/channels",
+                "representation": ("Philips SDK display view, 8-bit RGB; not raw internal samples" if isinstance(slide, PhilipsSlide)
+                                   else "OpenSlide 2D RGB; not all focal planes/channels"),
                 "size_bytes": target.stat().st_size,
             }
+            if isinstance(slide, PhilipsSlide):
+                result["philips_display_origin"] = slide.display_origin
             if icc:
                 result["status"] = "icc_review_required_" + ("pixels_reviewed" if pixels_reviewed else "pixel_review_required")
             row = {
@@ -1007,7 +1237,7 @@ def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
     parser.add_argument("output", nargs="?")
-    parser.add_argument("--compression", choices=("preserve", "lossless"), default="preserve")
+    parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg"), default="preserve")
     parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
     parser.add_argument("--keep-filename", action="store_true", help="Keep source basename with .tiff extension")
     parser.add_argument("--preserve-icc", action="store_true", help="Copy original ICC; profile metadata requires separate review")

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from tools.inspect_samples import inspect, load_openslide, safe_thumbnail
 from wsi_app.engine import create_anonymized_tiff
-from wsi_anonymizer import ExportCancelled
+from wsi_anonymizer import ExportCancelled, _open_slide
 
 
 def emit(kind, **payload):
@@ -35,7 +35,7 @@ def main():
             result = inspect(path, "preview", openslide)
             preview = None
             if not result["errors"]:
-                with openslide.OpenSlide(str(path)) as slide:
+                with _open_slide(path, openslide) as slide:
                     thumbnail = safe_thumbnail(slide, (700, 480))
                     if thumbnail is not None:
                         buffer = io.BytesIO()

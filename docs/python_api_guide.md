@@ -77,7 +77,7 @@ output/
 | `input_path` | 필수 | 원본 파일 경로. 문자열 또는 `Path` |
 | `output_dir` | `None` | 결과를 둘 상위 폴더 |
 | `run_id` | `None` | `YYYYMMDD_HHMMSS_ffffff` 형식. 같은 값으로 순차 호출하면 같은 폴더/CSV 사용 |
-| `compression` | `"preserve"` | 원본 JPEG 보존. 또는 `"lossless"`: RGB/Deflate 재저장 |
+| `compression` | `"preserve"` | 원본 JPEG 보존 / `"lossless"`: RGB/Deflate / `"jpeg"`: JPEG Q90 재압축(손실) |
 | `pyramid` | `True` | 피라미드 TIFF. `False`면 최대 해상도 단일 영상 |
 | `export_image` | `True` | TIFF 저장 여부 |
 | `export_csv` | `True` | CSV 저장 여부. 이미지/CSV 중 하나 이상은 선택해야 함 |
@@ -331,3 +331,8 @@ except OSError:
 이 프로그램은 조직 영상 속 글자를 자동으로 탐지·제거하지 않습니다. 영상 자체를 검토하고 필요한 영역을 마스킹해야 합니다. `pixels_reviewed`, `metadata_clean`, 제거 내역 어느 하나도 완전한 익명화의 자동 인증으로 사용하지 마세요.
 
 관련 문서: [전체 사용 안내](../README.md), [처리 정책](processing_policy.md), [검증 기록](release_validation.md).
+
+
+## Philips iSyntax / i2syntax (1.8.0 내부 연구용)
+
+`compression="lossless"` 또는 `compression="jpeg"`를 선택합니다. JPEG는 품질 90의 추가 손실 압축이며 Philips 고유 압축 보존이 아닙니다. 다른 프로젝트에서 `wsi_anonymizer.py` 옆에 연구용 배포본의 `philips` 폴더를 복사하면 동봉 Python/SDK를 사용합니다. [Philips 런타임·표시 영역·샘플 검증](philips_support.md)을 참고하세요.

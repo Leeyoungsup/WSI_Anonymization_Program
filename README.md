@@ -6,6 +6,10 @@ SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도�
 
 ## Windows EXE
 
+1.8.1 GUI: Philips 지원 형식과 SDK 동봉 상태를 상단에 표시합니다. 압축 옵션 이름을 줄이고 선택란 아래에 Philips/그 외 입력의 실제 처리 방식과 JPEG 손실 안내를 표시합니다. Philips 원본 XML 비교 범위와 ICC 옵션 설명도 정리했습니다.
+
+1.8.1 내부 연구용: **Philips SDK와 독립 Python 3.7 런타임을 동봉**하여 다른 연구용 Windows PC에서 별도 설치 없이 실행합니다. 기존 Conda 환경을 복사한 배포본이 아닙니다. Philips에는 무손실 Deflate와 **JPEG Q90 재압축(손실)**을 선택할 수 있습니다. 형식별 자동 JPEG 옵션은 Philips만 재압축하고 호환 SVS/NDPI는 원본 JPEG를 유지합니다. [Philips 사용·압축·배포 가이드](docs/philips_support.md)를 참고하세요.
+
 1.6.0: 익명화 내역을 **항목 / 원본 / 익명화 결과** 표로 표시합니다. 설명문·소프트웨어·날짜 등 원본 TIFF 문자열 값은 처리 직전에 GUI 메모리로 읽고, 선택한 행의 상세 내용을 아래에 표시합니다. 파일명 변경도 실제 이름으로 비교합니다. 원본 텍스트 값은 작업 프로세스·반환 JSON·CSV·출력 TIFF의 감사 내역에 넣지 않습니다. 기존 CSV 원본 파일명 옵션 및 원본 ICC 복사 옵션은 별도로 적용됩니다.
 
 화면용 읽기는 최대 64개 IFD, 태그당 4 KiB까지이며 이후 내용은 생략 표시합니다. ICC는 바이트 크기만 표시하고 바이너리를 표시하지 않습니다. TIFF로 읽을 수 없는 입력은 원본 값 대신 비교 상태를 표시합니다. 메모리에 둔 원본 값은 목록 비우기·새 작업·창 닫기 시 지웁니다. 이전 실행에서 저장한 CSV에 원본 텍스트는 없으므로 이 화면용 원본 값을 복원할 수 없습니다.
@@ -22,7 +26,7 @@ SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도�
 
 ICC에는 색상 정보 외의 설명·제조사 등 부가정보가 있을 수 있습니다. 그대로 복사하므로 포함한 결과는 `icc_review_required=True`, `metadata_clean=False` 및 ICC 검토 필요 상태로 기록합니다. ICC 내용을 자동 익명화했다고 주장하지 않습니다. 기존 TIFF 개인정보 태그·라벨·매크로 제거는 유지합니다. CSV에 `source_vendor`, `icc_profile_copied`, `icc_review_required`가 추가됩니다.
 
-`release/WSI_Anonymization-1.6.0-Windows-x64.zip`의 압축을 풀고 **WSI_Anonymization.exe**를 실행합니다. Python/Conda 설치 없이 사용할 수 있는 휴대용 EXE입니다. 샘플 원본은 배포본에 포함하지 않습니다. 코드서명은 미적용입니다.
+`release/WSI_Anonymization-1.8.1-Windows-x64-Research.zip`의 압축을 모두 풀고 **WSI/WSI_Anonymization.exe**를 실행합니다. **옆의 philips 폴더를 함께 유지하세요.** Python/Conda/SDK 별도 설치 없이 사용하도록 구성한 동일 기관 내부 연구용 배포본입니다. 샘플 원본은 포함하지 않습니다. 코드서명은 미적용입니다.
 
 **출력 파일명을 익명 이름으로 변경**은 기본 체크입니다. 해제하면 원본 이름에 `.tiff` 확장자를 붙이며 중복 이름은 `_2`, `_3` 등을 붙입니다. 기존 파일은 덮어쓰지 않습니다. 원본 파일명에 식별자가 있으면 결과 파일명에도 남습니다. CSV의 원본 파일명 포함 옵션과는 독립적입니다. API에서는 `rename_output=False`, CLI에서는 `--keep-filename`을 사용합니다.
 

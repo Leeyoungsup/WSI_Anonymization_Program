@@ -11,8 +11,8 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.6.0"
-NAME = "WSI_Anonymization-" + VERSION + "-Windows-x64"
+VERSION = "1.8.1"
+NAME = "WSI_Anonymization-" + VERSION + "-Windows-x64-Research"
 
 
 def main():
@@ -21,9 +21,24 @@ def main():
                        cwd=ROOT, check=True)
     folder = ROOT / "release" / NAME
     folder.mkdir(parents=True, exist_ok=True)
+    runtime = ROOT / "build/philips_runtime"
+    if not (runtime / "RUNTIME.json").is_file():
+        raise FileNotFoundError("Build tools/build_philips_runtime.py before packaging this internal research release")
+    runtime_info = json.loads((runtime / "RUNTIME.json").read_text(encoding="utf-8"))
+    for name, expected in runtime_info["files_sha256"].items():
+        if hashlib.sha256((runtime / name).read_bytes()).hexdigest() != expected:
+            raise ValueError("Philips runtime file changed: " + name)
+    for source in (ROOT / "philips_bridge").glob("*.py"):
+        if source.read_bytes() != (runtime / "bridge" / source.name).read_bytes():
+            raise ValueError("Rebuild the Philips runtime after bridge source changes")
+    shutil.copytree(runtime, folder / "philips", dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(runtime, ROOT / "dist/philips", dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     exe = folder / "WSI_Anonymization.exe"
     shutil.copy2(ROOT / "dist" / exe.name, exe)
     shutil.copy2(ROOT / "docs" / "release_readme.txt", folder / "READ_ME.txt")
+    shutil.copy2(ROOT / "docs" / "philips_support.md", folder / "PHILIPS.md")
     validation = ROOT / "docs" / "release_validation.md"
     if validation.exists():
         shutil.copy2(validation, folder / "VALIDATION.md")
@@ -34,6 +49,15 @@ def main():
                 "PySide6", "PySide6_Essentials", "shiboken6", "pyinstaller", "pyinstaller-hooks-contrib",
                 "packaging", "psutil", "cffi", "pycparser", "setuptools", "pywin32", "six"]
     licenses = folder / "THIRD_PARTY_LICENSES"
+    # This build-owned directory is regenerated; validate its absolute boundary
+    # before removing it. Long source license paths must never reach the staging
+    # directory either, not just the final ZIP.
+    if licenses.exists():
+        resolved = licenses.resolve()
+        if licenses.is_symlink() or resolved.parent != folder.resolve() or not resolved.is_relative_to((ROOT / "release").resolve()):
+            raise ValueError("Unexpected release license directory")
+        shutil.rmtree(("\\\\?\\" + str(resolved)) if sys.platform == "win32" else resolved)
+    license_sources = {}
     installed_packages = []
     for name in packages:
         try:
@@ -45,9 +69,12 @@ def main():
             if any(word in str(file).lower() for word in ("license", "copying", "copyright", "notice")):
                 source = Path(dist.locate_file(file))
                 if source.is_file() and ".." not in file.parts:
-                    target = licenses / name / file
+                    short = f"{len(license_sources) + 1:04d}.txt"
+                    license_sources[short] = {"package": name, "original_path": str(file)}
+                    target = licenses / short
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target)
+    (licenses / "ORIGINAL_PATHS.json").write_text(json.dumps(license_sources, indent=2), encoding="utf-8")
     # The Qt wheels' metadata does not include all open-source license texts.
     qt = licenses / "Qt"
     qt.mkdir(parents=True, exist_ok=True)
@@ -69,7 +96,9 @@ def main():
     source_files = [ROOT / name for name in ("app.py", "wsi_anonymizer.py", "WSI_Anonymization.spec",
                                             "requirements.txt", "requirements-build.txt")]
     source_files += sorted((ROOT / "wsi_app").glob("*.py"))
-    source_files += [ROOT / "tools" / name for name in ("inspect_samples.py", "check_openslide.py", "build_release.py")]
+    source_files += sorted((ROOT / "philips_bridge").glob("*.py"))
+    source_files += [ROOT / "docs" / "philips_support.md", ROOT / "requirements-philips.txt"]
+    source_files += [ROOT / "tools" / name for name in ("inspect_samples.py", "check_openslide.py", "build_release.py", "build_philips_runtime.py")]
     source_files += [ROOT / "docs" / "release_readme.txt"]
     source_files += [ROOT / "logo" / name for name in ("logo.png", "icon.png")]
     with zipfile.ZipFile(folder / "source-build.zip", "w", zipfile.ZIP_DEFLATED) as archive:
@@ -79,6 +108,7 @@ def main():
     (folder / "BUILD_INFO.json").write_text(json.dumps({
         "version": VERSION, "platform": "Windows x64", "python": sys.version,
         "built_at_utc": datetime.now(timezone.utc).isoformat(), "exe_sha256": digest,
+        "philips_runtime": runtime_info,
         "packages": {name: metadata.version(name) for name in installed_packages},
         "application_sources_sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files},
     }, indent=2), encoding="utf-8")

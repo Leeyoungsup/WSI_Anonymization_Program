@@ -10,7 +10,7 @@ from pathlib import Path
 
 import tifffile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from wsi_anonymizer import _objective_power, _numeric_property, _technical_metadata, _source_vendor
+from wsi_anonymizer import _objective_power, _numeric_property, _technical_metadata, _source_vendor, _open_slide, PHILIPS_EXTENSIONS
 
 
 def load_openslide():
@@ -69,9 +69,10 @@ def inspect(path: Path, sample_id: str, openslide) -> dict:
                     ],
                 })
     except Exception as exc:
-        result["errors"].append({"stage": "tiff_inventory", "type": type(exc).__name__})
+        if path.suffix.lower() not in PHILIPS_EXTENSIONS:
+            result["errors"].append({"stage": "tiff_inventory", "type": type(exc).__name__})
     try:
-        with openslide.OpenSlide(str(path)) as slide:
+        with _open_slide(path, openslide) as slide:
             technical = _technical_metadata(slide.dimensions,
                 (_numeric_property(slide, "openslide.mpp-x"), _numeric_property(slide, "openslide.mpp-y")),
                 _objective_power(slide), _source_vendor(slide))
@@ -90,8 +91,12 @@ def inspect(path: Path, sample_id: str, openslide) -> dict:
             }
             for name in slide.associated_images:
                 associated = slide.associated_images[name]
-                result["openslide"]["associated_images"][name] = associated.size
-                associated.close()
+                result["openslide"]["associated_images"][name] = associated.size if associated is not None else None
+                if associated is not None:
+                    associated.close()
+            if path.suffix.lower() in PHILIPS_EXTENSIONS:
+                result["openslide"]["reader"] = "Philips SDK display RGB"
+                result["openslide"]["display_origin"] = slide.display_origin
             for level, (width, height) in enumerate(slide.level_dimensions):
                 scale = slide.level_downsamples[level]
                 size = (min(128, width), min(128, height))
@@ -116,6 +121,8 @@ def inspect(path: Path, sample_id: str, openslide) -> dict:
                 result["openslide"]["thumbnail_decode_ok"] = True
     except Exception as exc:
         result["errors"].append({"stage": "openslide_decode", "type": type(exc).__name__})
+        if path.suffix.lower() in PHILIPS_EXTENSIONS:
+            result["errors"][-1]["message"] = "Philips SDK 2.0 could not decode this file; check file integrity and SDK compatibility."
     return result
 
 

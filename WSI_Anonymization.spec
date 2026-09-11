@@ -6,6 +6,7 @@ import sys
 
 packages = ["openslide-python", "openslide-bin", "numpy", "Pillow", "tifffile", "imagecodecs", "PySide6", "shiboken6", "PySide6_Essentials"]
 datas = [("logo/logo.png", "logo"), ("logo/icon.png", "logo")]
+datas += [(str(p), "philips_bridge") for p in Path("philips_bridge").glob("*.py")]
 for package in packages:
     datas += copy_metadata(package)
 ffi = Path(sys.prefix) / "Library" / "bin" / "ffi.dll"

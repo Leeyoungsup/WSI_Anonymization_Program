@@ -1,4 +1,13 @@
-MeDIAuto Anonymization 1.6.0 — Windows x64
+MeDIAuto Anonymization 1.8.1 — Windows x64 · 동일 기관 내부 연구용
+
+GUI: Philips 지원·SDK 동봉 안내를 상단에 표시합니다. 압축 선택란 아래에서 파일 형식별 처리 방식과 JPEG 손실 여부를 확인하세요.
+
+Philips SDK와 독립 Python 3.7 런타임을 동봉했습니다. 다른 연구용 PC에서 Python/Conda/SDK 설치 없이 실행합니다.
+ZIP을 모두 풀고 WSI_Anonymization.exe를 실행하세요. 옆의 philips 폴더를 함께 유지하세요.
+philips/SDK.zip은 보관용 SDK 원본입니다. 실행을 위해 다시 풀 필요가 없습니다. 자세한 안내: PHILIPS.md.
+Philips 압축 선택: 무손실 Deflate 또는 JPEG Q90 (추가 손실 있음).
+'형식별 자동 · Philips JPEG Q90 (손실)'를 선택하면 Philips만 JPEG로 재압축합니다.
+Philips iSyntax 고유 압축을 TIFF에 그대로 유지하는 기능은 아닙니다. 첫 샘플: 원본 105MB → JPEG TIFF 약 72MB.
 
 익명화 내역을 항목/원본/익명화 결과 표로 비교합니다. 행을 선택하면 아래에 상세 값을 표시합니다.
 원본 TIFF 설명문·날짜·소프트웨어 값은 화면 메모리에만 두고 CSV/반환 JSON에 저장하지 않습니다.
@@ -20,7 +29,7 @@ MeDIAuto 로고와 아이콘 적용, 파일 목록/내보내기 설정/슬라이
 원본 ICC 포함 체크박스를 추가했습니다. 기본 제외이며 원본에 ICC가 없으면 생략합니다.
 ICC 포함 시 색상 프로파일과 그 안의 부가정보가 그대로 복사되므로 별도 검토가 필요합니다.
 이 경우 metadata_clean=False 및 ICC 검토 필요 상태로 기록합니다.
-OpenSlide의 color_profile로 읽을 수 있으며 픽셀 색상 변환·재압축은 하지 않습니다.
+OpenSlide의 color_profile로 읽을 수 있습니다. ICC 포함 옵션 자체는 색상 변환을 수행하지 않습니다.
 
 출력 파일명을 익명 이름으로 변경: 기본 체크. 해제하면 원본 이름 + .tiff로 저장합니다.
 같은 이름이 있으면 _2, _3 등을 붙이고 기존 파일은 덮어쓰지 않습니다.

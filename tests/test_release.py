@@ -69,6 +69,13 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     assert b"PATIENT_SENTINEL" not in Path(preserved["file"]).read_bytes()
     np.testing.assert_array_equal(tifffile.imread(source), tifffile.imread(preserved["file"]))
     lossless = run(compression="lossless", export_csv=False)["data"]
+    jpeg = run(compression="jpeg", export_csv=False)["data"]
+    assert jpeg["report"]["compression"] == "jpeg-reencoded-q90"
+    assert jpeg["report"]["additional_lossy_compression"] is True
+    assert jpeg["report"]["source_compressed_payload_copied"] is False
+    with openslide.OpenSlide(jpeg["file"]) as slide:
+        assert slide.dimensions == (2048, 1024)
+        assert not slide.associated_images
     named = run(rename_output=False)["data"]
     colored = run(preserve_icc=True)["data"]
     assert colored["report"]["icc_profile_copied"] and not colored["report"]["metadata_clean"]
