@@ -1,4 +1,15 @@
-# Philips iSyntax / i2syntax — 1.8.1 내부 연구용 배포
+JPEG 2000 lossless (v1.8.2)
+-------------------------
+API: anonymize_wsi(input_path, output_dir, compression="jpeg2000", pyramid=True)
+Philips GUI default: auto_jpeg2000 (Philips JPEG 2000 lossless; other compatible inputs preserve JPEG).
+Existing auto mode continues to mean Philips Deflate. JPEG Q90 remains an explicit lossy option.
+Output uses Aperio-compatible tiled BigTIFF with JPEG 2000 codestreams (compression 33005),
+reversible wavelet transform and reversible color transform. Generated pyramid levels use the same codec.
+Lossless means exact preservation of SDK/OpenSlide decoded RGB, not Philips original internal samples.
+Full base tile pixel hashes are verified after decoding; all pyramid tiles are decoded and hashed.
+JPEG 2000 may be slower; size and performance depend on image content. Generic TIFF readers may not support this Aperio compression tag.
+
+# Philips iSyntax / i2syntax — 1.8.2 내부 연구용 배포
 
 **이 배포본은 다른 Windows 10/11 x64 연구용 PC에서 Python·Conda·SDK를 별도로 설치하지 않고 실행하도록 구성했습니다.** ZIP을 모두 풀고 `WSI/WSI_Anonymization.exe`를 실행합니다. 옆의 `philips` 폴더를 함께 유지하세요. `philips/SDK.zip`은 보관용 SDK 원본이므로 실행을 위해 다시 풀 필요가 없습니다.
 
@@ -9,7 +20,7 @@ Windows용 SDK는 `python37.dll`을 요구합니다. 기존 Conda 환경을 복�
 ## 프로그램 사용
 
 1. `.isyntax` 또는 `.i2syntax`를 추가합니다.
-2. Philips 파일을 추가하면 기존 `원본 JPEG 압축 유지` 선택은 **형식별 자동 · Philips 무손실**로 바뀝니다. 목록 아래 안내와 압축 설정에서 확인할 수 있습니다.
+2. Philips 파일을 추가하면 기존 `원본 JPEG 압축 유지` 선택은 **형식별 자동 · Philips JPEG 2000 무손실**로 바뀝니다. 목록 아래 안내와 압축 설정에서 확인할 수 있습니다.
 3. Philips 출력 용량을 줄이려면 **형식별 자동 · Philips JPEG Q90 (손실)**를 선택합니다. Philips만 JPEG로 재압축하고 호환 SVS/NDPI는 기존 압축을 유지합니다. JPEG 품질 90 / 4:2:0은 추가 손실 압축입니다. `JPEG 재압축` 항목은 선택한 모든 입력을 JPEG로 재압축합니다.
 4. 검사 또는 내보내기를 실행합니다. TIFF/CSV 선택, 익명 파일명, MPP, ICC, 날짜·시간 출력 폴더 설정은 기존과 같습니다.
 
@@ -26,13 +37,13 @@ from wsi_anonymizer import anonymize_wsi
 
 result = anonymize_wsi(
     "slide.i2syntax", "output",
-    compression="jpeg",  # JPEG Q90; 추가 손실을 피하려면 "lossless"
+    compression="jpeg2000",  # SDK 표시 RGB를 JPEG 2000 무손실 저장
     include_filename=False,
     preserve_icc=False,
 )
 ```
 
-Philips에서 `compression="preserve"`로 TIFF를 요청하면 명확한 오류를 반환합니다. API는 `preserve`, `lossless`, `jpeg`를 받습니다. GUI의 `auto`와 `auto_jpeg`는 파일별로 실제 압축 값을 선택하는 UI 옵션입니다. CSV 전용 호출은 `export_image=False`로 사용할 수 있습니다. JPEG 출력은 반환값 `compression="jpeg-reencoded-q90"`, `additional_lossy_compression=True`, `jpeg_quality=90`으로 표시되며 CSV에도 압축 방식이 기록됩니다. 타일 검증 통과는 재압축 결과의 무결성 검증이며 원본 픽셀과 동일하다는 뜻이 아닙니다.
+Philips에서 `compression="preserve"`로 TIFF를 요청하면 명확한 오류를 반환합니다. API는 `preserve`, `lossless`, `jpeg`, `jpeg2000`을 받습니다. GUI의 `auto`와 `auto_jpeg`는 파일별로 실제 압축 값을 선택하는 UI 옵션입니다. CSV 전용 호출은 `export_image=False`로 사용할 수 있습니다. JPEG 출력은 반환값 `compression="jpeg-reencoded-q90"`, `additional_lossy_compression=True`, `jpeg_quality=90`으로 표시되며 CSV에도 압축 방식이 기록됩니다. 타일 검증 통과는 재압축 결과의 무결성 검증이며 원본 픽셀과 동일하다는 뜻이 아닙니다.
 
 다른 프로젝트에서는 `wsi_anonymizer.py` 옆에 배포본의 `philips` 폴더를 함께 복사하면 동봉 런타임을 사용합니다. 별도 설치한 SDK 환경을 명시적으로 사용하려는 개발자만 다음 환경 변수를 지정합니다. 이 경우에는 `philips_bridge` 소스 폴더도 필요합니다.
 

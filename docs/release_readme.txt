@@ -1,4 +1,15 @@
-MeDIAuto Anonymization 1.8.1 — Windows x64 · 동일 기관 내부 연구용
+JPEG 2000 lossless (v1.8.2)
+-------------------------
+API: anonymize_wsi(input_path, output_dir, compression="jpeg2000", pyramid=True)
+Philips GUI default: auto_jpeg2000 (Philips JPEG 2000 lossless; other compatible inputs preserve JPEG).
+Existing auto mode continues to mean Philips Deflate. JPEG Q90 remains an explicit lossy option.
+Output uses Aperio-compatible tiled BigTIFF with JPEG 2000 codestreams (compression 33005),
+reversible wavelet transform and reversible color transform. Generated pyramid levels use the same codec.
+Lossless means exact preservation of SDK/OpenSlide decoded RGB, not Philips original internal samples.
+Full base tile pixel hashes are verified after decoding; all pyramid tiles are decoded and hashed.
+JPEG 2000 may be slower; size and performance depend on image content. Generic TIFF readers may not support this Aperio compression tag.
+
+MeDIAuto Anonymization 1.8.2 — Windows x64 · 동일 기관 내부 연구용
 
 GUI: Philips 지원·SDK 동봉 안내를 상단에 표시합니다. 압축 선택란 아래에서 파일 형식별 처리 방식과 JPEG 손실 여부를 확인하세요.
 

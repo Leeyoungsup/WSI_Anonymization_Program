@@ -1,18 +1,18 @@
-# Windows EXE 1.8.1 내부 연구용 검증
+# Windows EXE 1.8.2 내부 연구용 검증
 
-1.8.1 GUI: 헤더·빈 목록·상태줄에 Philips를 표시하고 동봉 런타임 안내를 추가했습니다. 압축 이름을 줄이고 선택란 아래에 파일 형식별 처리 방식과 JPEG 추가 손실 여부를 항상 표시합니다. 화면을 offscreen으로 렌더링하여 배치를 확인하고 기존 내보내기 옵션·원본 값 비저장 GUI 검사를 통과했습니다.
+1.8.2 GUI: 헤더·빈 목록·상태줄에 Philips를 표시하고 동봉 런타임 안내를 추가했습니다. 압축 이름을 줄이고 선택란 아래에 파일 형식별 처리 방식과 JPEG 추가 손실 여부를 항상 표시합니다. 화면을 offscreen으로 렌더링하여 배치를 확인하고 기존 내보내기 옵션·원본 값 비저장 GUI 검사를 통과했습니다.
 
 재업로드된 두 번째 Philips 샘플(211,555,284바이트)은 같은 SDK로 정상 읽혔습니다. 187,996 × 83,747, 10개 레벨, 30개 영역 읽기 및 썸네일 생성 성공입니다. 이전 파일의 실패 기록은 과거 입력에 대한 것입니다. 새 두 번째 샘플의 전체 TIFF 변환은 아직 검증하지 않았습니다. 오류 처리 테스트는 실제 정상 샘플 대신 별도의 잘못된 합성 입력을 사용합니다.
 
-배포 ZIP: `release/WSI_Anonymization-1.8.1-Windows-x64-Research.zip`.
+배포 ZIP: `release/WSI_Anonymization-1.8.2-Windows-x64-Research.zip`.
 
-1.8.1은 공식 Python 3.7.9 임베디드 배포본, NumPy 1.21.6 / Pillow 9.5.0 Windows wheel과 제공된 Windows 연구용 SDK의 원본 DLL/PYD를 동봉합니다. 기존 Conda 환경 전체를 복사하거나 실행 시 참조하지 않습니다. SDK 원본 Windows 배포 파일·문서는 `philips/SDK.zip`, EULA는 `philips/EULA.txt`, 구성과 해시는 `philips/RUNTIME.json`에 포함합니다.
+1.8.2은 공식 Python 3.7.9 임베디드 배포본, NumPy 1.21.6 / Pillow 9.5.0 Windows wheel과 제공된 Windows 연구용 SDK의 원본 DLL/PYD를 동봉합니다. 기존 Conda 환경 전체를 복사하거나 실행 시 참조하지 않습니다. SDK 원본 Windows 배포 파일·문서는 `philips/SDK.zip`, EULA는 `philips/EULA.txt`, 구성과 해시는 `philips/RUNTIME.json`에 포함합니다.
 
 `tests/test_portable_philips.py`: OS System32만 있는 PATH, 기존 Conda가 없는 가짜 사용자 홈, 격리된 임베디드 Python에서 샘플 열기 성공. 실제 프로세스의 로드 모듈을 조사해 Python/SDK DLL이 동봉 경로에 있으며 Conda/Anaconda DLL이 로드되지 않음을 확인했습니다. 정적 PE 의존성 검사에서 외부 의존성은 Windows 기본 시스템 DLL/API 세트뿐입니다. 새 Windows OS를 별도 설치한 VM 검증은 수행하지 않았습니다.
 
 `tests/test_jpeg_export.py`: JPEG Q90 손실 압축 표시, 개인정보 표식 제외, 표준 피라미드와 전체 타일 디코딩/압축 바이트 해시 검증, OpenSlide 읽기, CSV 압축 방식 기록과 취소 정리를 확인했습니다. 실제 첫 Philips 샘플은 동봉 런타임으로 72,034,064바이트 JPEG TIFF(5개 레벨, 5,697개 검증 타일)로 변환했습니다. 원본은 105,055,621바이트이며 Deflate 결과는 929,985,707바이트입니다. JPEG는 추가 손실 압축으로 원본 픽셀 동일성을 주장하지 않습니다. 결과 기록: `artifacts/philips_jpeg_validation.json`.
 
-이하 1.7.0 및 이전 버전의 검증 이력입니다. 이전 버전의 SDK 미동봉/별도 환경 조건은 1.8.1 내부 연구용 ZIP에는 적용되지 않습니다.
+이하 1.7.0 및 이전 버전의 검증 이력입니다. 이전 버전의 SDK 미동봉/별도 환경 조건은 1.8.2 내부 연구용 ZIP에는 적용되지 않습니다.
 
 1.7.0 Philips: 기존 Python 3.7.9 SDK 환경의 핵심 DLL/PYD 6개가 제공 ZIP의 Windows SDK와 SHA-256으로 일치함을 확인했습니다. 첫 i2syntax 샘플의 51,996 × 22,145 SDK 표시 RGB를 Deflate 피라미드 TIFF로 변환하고 모든 출력 타일 검증, 25개 원본/출력 영역 픽셀 일치를 확인했습니다. 전체 결과는 `artifacts/philips_conversion_validation.json`입니다. 두 번째 샘플은 SDK 2.0의 내부 DICOM 블록 오류로 열기 실패하며 지원 성공으로 집계하지 않습니다.
 
@@ -77,3 +77,10 @@ python tests/test_release_gui.py
 ```
 
 이전 단일 TIFF 릴리즈 기록은 `release_validation_1_0.md`입니다.
+# 1.8.2 JPEG 2000 무손실 검증
+
+- 합성 RGB 영상: 전체 픽셀이 TIFF 디코더와 OpenSlide 모두에서 원본과 일치. 모든 레벨의 압축 태그 33005, 개인정보 표식 제외, CSV 압축 기록 및 취소 정리 통과.
+- 두 Philips 샘플: 중앙 768×640 영역의 SDK 표시 RGB와 출력 OpenSlide 픽셀 일치, ICC 보존 및 피라미드 검증 통과.
+- 첫 Philips 샘플 전체 변환: 719,377,526바이트, 537.578초(약 8분 58초), 5개 레벨, 5,697개 타일 검증. `artifacts/philips_jpeg2000_validation.json`에 기록.
+- 기존 측정은 Deflate 929,985,707바이트/156.094초, JPEG Q90 72,034,064바이트/108.985초. 이번 실행은 EXE 빌드 및 다른 검사와 일부 겹쳤으므로 동일 조건의 성능 비교는 아님. JPEG 2000의 속도 개선을 보장하지 않음.
+- 새 EXE: JPEG 2000 전체 픽셀 일치와 ICC 읽기, 기존 압축 옵션, GUI 작업 처리, 동봉 Philips 런타임의 별도 Python/Conda 없는 PATH·홈 환경 검증 통과. 실제 새 Windows PC에서의 실행 시험은 수행하지 않음.

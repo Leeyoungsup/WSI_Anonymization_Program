@@ -76,6 +76,14 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
     with openslide.OpenSlide(jpeg["file"]) as slide:
         assert slide.dimensions == (2048, 1024)
         assert not slide.associated_images
+    jp2 = run(compression="jpeg2000", preserve_icc=True)["data"]
+    assert jp2["report"]["compression"] == "jpeg2000-lossless"
+    assert not jp2["report"]["additional_lossy_compression"]
+    np.testing.assert_array_equal(tifffile.imread(source), tifffile.imread(jp2["file"]))
+    with openslide.OpenSlide(jp2["file"]) as slide, openslide.OpenSlide(str(source)) as original_slide:
+        np.testing.assert_array_equal(np.asarray(slide.read_region((0, 0), 0, slide.dimensions)),
+                                      np.asarray(original_slide.read_region((0, 0), 0, slide.dimensions)))
+        assert slide.read_region((0, 0), 0, (1, 1)).info["icc_profile"] == icc
     named = run(rename_output=False)["data"]
     colored = run(preserve_icc=True)["data"]
     assert colored["report"]["icc_profile_copied"] and not colored["report"]["metadata_clean"]

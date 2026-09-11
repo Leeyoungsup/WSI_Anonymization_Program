@@ -1,3 +1,14 @@
+JPEG 2000 lossless (v1.8.2)
+-------------------------
+API: anonymize_wsi(input_path, output_dir, compression="jpeg2000", pyramid=True)
+Philips GUI default: auto_jpeg2000 (Philips JPEG 2000 lossless; other compatible inputs preserve JPEG).
+Existing auto mode continues to mean Philips Deflate. JPEG Q90 remains an explicit lossy option.
+Output uses Aperio-compatible tiled BigTIFF with JPEG 2000 codestreams (compression 33005),
+reversible wavelet transform and reversible color transform. Generated pyramid levels use the same codec.
+Lossless means exact preservation of SDK/OpenSlide decoded RGB, not Philips original internal samples.
+Full base tile pixel hashes are verified after decoding; all pyramid tiles are decoded and hashed.
+JPEG 2000 may be slower; size and performance depend on image content. Generic TIFF readers may not support this Aperio compression tag.
+
 # Python 함수 사용 가이드
 
 현재 코드와 v1.6.0 기능 기준입니다. EXE나 GUI를 실행하지 않고 `anonymize_wsi()`를 호출할 수 있습니다. 함수는 변환·검증·저장을 마친 뒤 결과 딕셔너리를 반환합니다.
@@ -77,7 +88,7 @@ output/
 | `input_path` | 필수 | 원본 파일 경로. 문자열 또는 `Path` |
 | `output_dir` | `None` | 결과를 둘 상위 폴더 |
 | `run_id` | `None` | `YYYYMMDD_HHMMSS_ffffff` 형식. 같은 값으로 순차 호출하면 같은 폴더/CSV 사용 |
-| `compression` | `"preserve"` | 원본 JPEG 보존 / `"lossless"`: RGB/Deflate / `"jpeg"`: JPEG Q90 재압축(손실) |
+| `compression` | `"preserve"` | 원본 JPEG 보존 / `"lossless"`: RGB/Deflate / `"jpeg"`: JPEG Q90 재압축(손실) / `"jpeg2000"`: JPEG 2000 무손실 |
 | `pyramid` | `True` | 피라미드 TIFF. `False`면 최대 해상도 단일 영상 |
 | `export_image` | `True` | TIFF 저장 여부 |
 | `export_csv` | `True` | CSV 저장 여부. 이미지/CSV 중 하나 이상은 선택해야 함 |

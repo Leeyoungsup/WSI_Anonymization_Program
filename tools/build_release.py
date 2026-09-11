@@ -11,7 +11,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.8.1"
+VERSION = "1.8.2"
 NAME = "WSI_Anonymization-" + VERSION + "-Windows-x64-Research"
 
 

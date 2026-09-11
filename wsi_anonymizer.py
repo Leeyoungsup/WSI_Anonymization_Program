@@ -750,6 +750,8 @@ def _append_overview(target, openslide, mpp, compression, notify):
                         data = imagecodecs.jpeg_encode(rgb, level=90, subsampling=(2, 2))
                         header, offset, _, _ = _jpeg_header(data)
                         data = header + _jpeg_entropy(data[offset:]) + b"\xff\xd9"
+                    elif compression == "jpeg2000":
+                        data = imagecodecs.jpeg2k_encode(rgb, reversible=True, codecformat="J2K", mct=True)
                     else:
                         data = imagecodecs.deflate_encode(rgb, level=1)
                     digest.update(struct.pack("<Q", len(data)))
@@ -760,7 +762,7 @@ def _append_overview(target, openslide, mpp, compression, notify):
             raise OSError("Not enough space for pyramid overview")
         with tifffile.TiffWriter(target, append=True) as writer:
             writer.write(tiles(), shape=(height, width, 3), dtype=np.uint8, tile=(tile, tile),
-                         compression="jpeg" if compression in ("preserve", "jpeg") else "deflate",
+                         compression="jpeg" if compression in ("preserve", "jpeg") else (33005 if compression == "jpeg2000" else "deflate"),
                          photometric="ycbcr" if compression in ("preserve", "jpeg") else "rgb",
                          subsampling=(2, 2) if compression in ("preserve", "jpeg") else None,
                          metadata=None, description=None, software=False, datetime=False, subfiletype=1,
@@ -781,6 +783,9 @@ def _append_overview(target, openslide, mpp, compression, notify):
                 decoded = imagecodecs.jpeg_decode(data)
                 if decoded.shape != (tile, tile, 3):
                     raise ValueError("Pyramid JPEG tile decode failed")
+            elif compression == "jpeg2000":
+                if imagecodecs.jpeg2k_decode(data).shape != (tile, tile, 3):
+                    raise ValueError("Pyramid JPEG 2000 tile decode failed")
             elif len(imagecodecs.deflate_decode(data)) != tile * tile * 3:
                 raise ValueError("Pyramid Deflate tile decode failed")
         if len(page.dataoffsets) != total or digest.digest() != expected:
@@ -873,6 +878,9 @@ def anonymize_wsi(
         subdirectory contains anonymous_<uuid>.tiff and metadata.csv.
     run_id: YYYYMMDD_HHMMSS_ffffff timestamp; share between sequential calls to put
         a batch in one directory/CSV. Omit to create a fresh run per call.
+    compression: 'jpeg2000' saves decoded RGB losslessly using reversible JPEG 2000
+        in Aperio-compatible TIFF (compression tag 33005), including generated levels.
+        Philips uses SDK display RGB, not the original internal representation.
     compression: 'preserve' (default) copies JPEG coding data without encoding.
         Supports self-contained baseline YCbCr JPEG TIFF tiles and indexed NDPI
         with 1x1 component sampling, full restart rows, and compatible geometry.
@@ -936,8 +944,8 @@ def anonymize_wsi(
         raise ValueError("workers must be between 1 and 16")
     if not isinstance(pixels_reviewed, bool):
         raise TypeError("pixels_reviewed must be a boolean")
-    if compression not in ("preserve", "lossless", "jpeg"):
-        raise ValueError("compression must be preserve, lossless or jpeg")
+    if compression not in ("preserve", "lossless", "jpeg", "jpeg2000"):
+        raise ValueError("compression must be preserve, lossless, jpeg or jpeg2000")
     if compression == "preserve" and redactions:
         raise ValueError("Pixel redactions require compression=lossless; preserve mode never re-encodes")
     if source.suffix.lower() in PHILIPS_EXTENSIONS and compression == "preserve" and export_image:
@@ -1075,7 +1083,8 @@ def anonymize_wsi(
                         writer.write(
                             tiles(), shape=(height, width, 3), dtype=np.uint8,
                             tile=(tile_size, tile_size), photometric="rgb",
-                            compression="deflate", compressionargs={"level": 1},
+                            compression=33005 if compression == "jpeg2000" else "deflate",
+                            compressionargs={"reversible": True, "codecformat": "J2K", "mct": True} if compression == "jpeg2000" else {"level": 1},
                             metadata=None, description=description if level == 0 else None, software=False, datetime=False,
                             iccprofile=icc if level == 0 else None,
                             resolution=resolution, resolutionunit="CENTIMETER" if mpp else "NONE",
@@ -1187,7 +1196,7 @@ def anonymize_wsi(
                 "technical_metadata": technical,
                 "anonymization_audit": audit,
                 "mpp": list(mpp) if mpp else None,
-                "compression": {"preserve": "jpeg-preserved", "lossless": "deflate-lossless", "jpeg": "jpeg-reencoded-q90"}[compression],
+                "compression": {"preserve": "jpeg-preserved", "lossless": "deflate-lossless", "jpeg": "jpeg-reencoded-q90", "jpeg2000": "jpeg2000-lossless"}[compression],
                 "additional_lossy_compression": compression == "jpeg",
                 "jpeg_quality": 90 if compression == "jpeg" else None,
                 "all_output_tiles_verified": True, "verified_tiles": verified,
@@ -1237,7 +1246,7 @@ def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
     parser.add_argument("output", nargs="?")
-    parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg"), default="preserve")
+    parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg", "jpeg2000"), default="preserve")
     parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
     parser.add_argument("--keep-filename", action="store_true", help="Keep source basename with .tiff extension")
     parser.add_argument("--preserve-icc", action="store_true", help="Copy original ICC; profile metadata requires separate review")

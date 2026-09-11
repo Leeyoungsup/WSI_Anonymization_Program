@@ -109,7 +109,7 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MeDIAuto Anonymization · 1.8.1 · 내부 연구용")
+        self.setWindowTitle("MeDIAuto Anonymization · 1.8.2 · 내부 연구용")
         self.setWindowIcon(QIcon(str(ASSET_ROOT / "icon.png")))
         self.resize(1240, 900)
         self.setMinimumSize(1050, 760)
@@ -257,9 +257,12 @@ class Window(QMainWindow):
         self.compression.addItem("형식별 자동 · Philips 무손실", "auto")
         self.compression.addItem("JPEG 재압축 · 품질 90 (손실)", "jpeg")
         self.compression.addItem("형식별 자동 · Philips JPEG Q90 (손실)", "auto_jpeg")
+        self.compression.addItem("JPEG 2000 무손실", "jpeg2000")
+        self.compression.addItem("형식별 자동 · Philips JPEG 2000 무손실", "auto_jpeg2000")
         self.compression.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.compression.setMinimumContentsLength(18)
-        option(self.compression, "compression", "압축 방식", "원본 JPEG 압축 유지: 호환되는 SVS/NDPI/TIFF의 JPEG 데이터를 재사용합니다.\n\n무손실 Deflate: 읽은 RGB를 무손실 저장합니다. 파일 크기가 크게 늘 수 있습니다.\n\n형식별 자동: Philips iSyntax/i2syntax는 SDK 표시 영역의 8비트 RGB를 Deflate로 저장하고, 그 외 형식은 원본 JPEG 유지로 처리합니다. Philips 원시 내부 샘플을 그대로 복사하는 것은 아니며, SDK 표시 영역은 원시 영역보다 가장자리가 작을 수 있습니다. 확인되지 않는 배율은 생략합니다.\n\nJPEG 재압축: 품질 90, 4:2:0으로 저장합니다. 추가 화질 손실이 있으며 Philips 고유 압축 보존이 아닙니다.\n\n내부 연구용 배포본에는 SDK와 Python 3.7 런타임이 동봉됩니다. philips 폴더를 함께 유지하세요.", 2, 0)
+        self.compression.setToolTip("JPEG 2000 무손실: 가역 웨이블릿 압축으로 읽은 RGB 픽셀을 보존합니다. Aperio 호환 TIFF로 저장하며 Philips 고유 압축 복사는 아닙니다.")
+        option(self.compression, "compression", "압축 방식", "원본 JPEG 압축 유지: 호환되는 SVS/NDPI/TIFF의 JPEG 데이터를 재사용합니다.\n\n무손실 Deflate: 읽은 RGB를 무손실 저장합니다. 파일 크기가 크게 늘 수 있습니다.\n\n형식별 자동: Philips iSyntax/i2syntax는 SDK 표시 영역의 8비트 RGB를 Deflate로 저장하고, 그 외 형식은 원본 JPEG 유지로 처리합니다. Philips 원시 내부 샘플을 그대로 복사하는 것은 아니며, SDK 표시 영역은 원시 영역보다 가장자리가 작을 수 있습니다. 확인되지 않는 배율은 생략합니다.\n\nJPEG 2000 무손실: 가역 웨이블릿 압축으로 읽은 RGB 픽셀을 보존합니다. Philips 추가 시 기본 선택되며, 그 외 호환 입력은 원본 JPEG를 유지합니다. Philips 고유 압축 복사가 아니고 속도·용량은 영상에 따라 다릅니다.\n\nJPEG 재압축: 품질 90, 4:2:0으로 저장합니다. 추가 화질 손실이 있으며 Philips 고유 압축 보존이 아닙니다.\n\n내부 연구용 배포본에는 SDK와 Python 3.7 런타임이 동봉됩니다. philips 폴더를 함께 유지하세요.", 2, 0)
         option(QLabel("개인정보 태그 제거 · ICC 포함 시 별도 검토"), "privacy", "익명화 범위", "TIFF에서 원본 개인정보 태그, 라벨·매크로·원본 썸네일과 JPEG APP/COM 부가정보를 제외합니다. ICC는 기본 제외이며 원본 ICC 포함을 선택하면 프로파일 내부 정보도 함께 복사되어 별도 검토가 필요합니다.\n\n조직 영상에 직접 찍힌 이름이나 식별자는 자동으로 지워지지 않습니다. 아래 검토 확인은 사용자의 확인 기록이며 자동 익명화 인증이 아닙니다.", 2, 1)
         self.structure = QComboBox()
         self.structure.addItem("표준 피라미드 TIFF", True)
@@ -366,6 +369,8 @@ class Window(QMainWindow):
         self.structure.setEnabled(images)
         self.copy_button.setEnabled(self.process is None and (images or csv))
         descriptions = {
+            "jpeg2000": "모든 입력: JPEG 2000 무손실 피라미드 TIFF. 읽은 RGB 픽셀을 보존합니다. Philips 고유 압축 복사는 아니며 처리 시간은 늘 수 있습니다.",
+            "auto_jpeg2000": "Philips: JPEG 2000 무손실 · 그 외 호환 입력: 원본 JPEG 유지. SDK 표시용 8비트 RGB를 보존하며 원시 내부 데이터 보존은 아닙니다.",
             "preserve": "호환 SVS/NDPI/TIFF: 원본 JPEG 유지. Philips 영상 내보내기는 형식별 자동을 선택하세요.",
             "lossless": "모든 입력: RGB를 Deflate로 저장. 추가 압축 손실이 없지만 용량이 커질 수 있습니다.",
             "jpeg": "모든 입력: JPEG 품질 90으로 재압축. 추가 화질 손실이 있습니다.",
@@ -421,7 +426,7 @@ class Window(QMainWindow):
         self.status.setText(f"{len(self.paths)}개 파일 · 전체 검사를 시작할 수 있습니다.")
         if any(p.suffix.lower() in {".isyntax", ".i2syntax"} for p in self.paths):
             if self.compression.currentData() == "preserve":
-                self.compression.setCurrentIndex(self.compression.findData("auto"))
+                self.compression.setCurrentIndex(self.compression.findData("auto_jpeg2000"))
             self.status.setText(f"{len(self.paths)}개 파일 · Philips는 SDK 표시 RGB를 저장합니다. 압축 설정을 확인하세요.")
         self.empty_state.setVisible(not self.paths)
         if self.paths and self.table.currentRow() < 0:
@@ -521,8 +526,8 @@ class Window(QMainWindow):
                "run_id": self.run_id,
                "cancel_file": str(self.cancel_file)}
         job.update(self.export_options())
-        if job["compression"] in ("auto", "auto_jpeg"):
-            philips_compression = "jpeg" if job["compression"] == "auto_jpeg" else "lossless"
+        if job["compression"] in ("auto", "auto_jpeg", "auto_jpeg2000"):
+            philips_compression = {"auto": "lossless", "auto_jpeg": "jpeg", "auto_jpeg2000": "jpeg2000"}[job["compression"]]
             job["compression"] = philips_compression if self.paths[row].suffix.lower() in {".isyntax", ".i2syntax"} else "preserve"
         if FROZEN:
             self.job_file.write_text(json.dumps(job) + "\n", encoding="utf-8")
@@ -699,7 +704,7 @@ class Window(QMainWindow):
                     f"SDK 표시 영역 시작 좌표: {report.get('philips_display_origin')}"])
                   if report.get("source_vendor") == "philips" and "philips_display_origin" in report else []),
                 "원본 개인정보 태그·라벨·매크로 제외; ICC는 아래 상태 참조",
-                "압축: " + ({"jpeg-preserved": "원본 JPEG 유지", "deflate-lossless": "무손실 Deflate", "jpeg-reencoded-q90": "JPEG 재압축 Q90 (손실)"}.get(report["compression"], report["compression"])),
+                "압축: " + ({"jpeg2000-lossless": "JPEG 2000 무손실", "jpeg-preserved": "원본 JPEG 유지", "deflate-lossless": "무손실 Deflate", "jpeg-reencoded-q90": "JPEG 재압축 Q90 (손실)"}.get(report["compression"], report["compression"])),
                 f"전체 타일 검증: {report['verified_tiles']:,}개 통과",
                 "영상 개인정보 검토: " + ("사용자가 확인함" if report["pixel_review_asserted_by_caller"] else "추가 검토 필요"),
                 "", (f"ICC: 원본 포함 ({report.get('icc_profile_bytes', 0):,} bytes) · ICC 내부 정보 별도 검토 필요"
