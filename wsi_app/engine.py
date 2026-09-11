@@ -6,7 +6,7 @@ from wsi_anonymizer import anonymize_wsi
 
 def create_anonymized_tiff(source, output, *, run_id=None, pixels_reviewed=False, progress=None, cancelled=None,
                           export_image=True, export_csv=True, include_filename=True, rename_output=True,
-                          preserve_mpp=True, preserve_icc=False, compression="preserve", pyramid=True):
+                          preserve_mpp=True, preserve_icc=True, compression="preserve", pyramid=True):
     source, output = Path(source).resolve(), Path(output).resolve()
     if output == source.parent or output.is_relative_to(source.parent):
         raise ValueError("출력 폴더는 원본 폴더 밖으로 선택하세요.")

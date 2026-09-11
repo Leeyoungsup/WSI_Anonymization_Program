@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(dir=ROOT/'artifacts') as folder:
     assert [w.storage_choice.model().item(i).isEnabled() for i in range(3)] == [True, False, True]
     w.output.setText(folder)
     w.include_filename.setChecked(False)
-    w.preserve_icc.setChecked(True)
+    assert w.preserve_icc.isChecked()
     assert not w.structure.isEnabled() and not w.preserve_mpp.isEnabled()
     w.start('copy')
     deadline = time.monotonic() + 180

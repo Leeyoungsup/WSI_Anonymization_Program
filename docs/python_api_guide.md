@@ -61,7 +61,7 @@ result = anonymize_wsi(
     rename_output=True,
     include_filename=False,       # API 기본값은 True; 이 예제는 원본 이름을 CSV에서 제외
     preserve_mpp=True,
-    preserve_icc=False,
+    preserve_icc=True,
     pixels_reviewed=False,
 )
 
@@ -101,7 +101,7 @@ output/
 | `redactions` | `()` | `(x, y, width, height)` 사각형 목록. 최대 해상도 픽셀 좌표, 흰색 처리 |
 | `pixels_reviewed` | `False` | 사용자가 영상 개인정보를 검토했다는 확인 기록 |
 | `preserve_mpp` | `True` | TIFF에 X/Y MPP 및 실제 영상 영역 크기 저장 |
-| `preserve_icc` | `False` | 원본 RGB ICC 포함. 프로파일 내부 부가정보도 복사되므로 별도 검토 필요 |
+| `preserve_icc` | `True` | 원본 RGB ICC 포함. 프로파일 내부 부가정보도 복사되므로 별도 검토 필요 |
 | `tile_size` | `512` | Deflate 경로의 타일 크기. 128~2048, 16의 배수 |
 | `workers` | `4` | Deflate 경로의 작업 수. 1~16 |
 | `progress` | `None` | 진행 이벤트 딕셔너리를 받는 함수 |
@@ -135,7 +135,7 @@ results = []
 for source in sources:
     result = anonymize_wsi(
         source, "output", run_id=run_id,
-        include_filename=False, preserve_icc=False,
+        include_filename=False, preserve_icc=True,
     )
     results.append(result)
     print(result["output_path"], result["status"])
@@ -341,7 +341,7 @@ except OSError:
 
 ## 12. 공유 전 확인
 
-공유용 예제에서는 `rename_output=True`, `include_filename=False`, `preserve_icc=False`를 사용했습니다. 이는 함수 기본값 전체와 같지 않습니다. 실제 업무 목적에 맞게 명시적으로 지정하세요.
+공유용 예제에서는 `rename_output=True`, `include_filename=False`, `preserve_icc=True`를 사용했습니다. 이는 함수 기본값 전체와 같지 않습니다. 실제 업무 목적에 맞게 명시적으로 지정하세요.
 
 이 프로그램은 조직 영상 속 글자를 자동으로 탐지·제거하지 않습니다. 영상 자체를 검토하고 필요한 영역을 마스킹해야 합니다. `pixels_reviewed`, `metadata_clean`, 제거 내역 어느 하나도 완전한 익명화의 자동 인증으로 사용하지 마세요.
 

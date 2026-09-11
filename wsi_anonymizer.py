@@ -1202,7 +1202,7 @@ def anonymize_wsi(
     redactions: Sequence[Sequence[int]] = (),
     pixels_reviewed: bool = False,
     preserve_mpp: bool = True,
-    preserve_icc: bool = False,
+    preserve_icc: bool = True,
     tile_size: int = 512,
     workers: int = 4,
     progress: Callable[[dict], None] | None = None,
@@ -1257,7 +1257,7 @@ def anonymize_wsi(
     pixels_reviewed: caller confirms no identifiers remain outside supplied masks.
     preserve_mpp: copy only finite positive numeric microns-per-pixel calibration.
     preserve_icc: copy the original RGB ICC profile including its metadata.
-        Defaults to False. If copied, metadata_clean=False and the report/CSV
+        Defaults to True. If copied, metadata_clean=False and the report/CSV
         explicitly require separate ICC metadata review. Pixels are not transformed.
     tile_size: controls TIFF re-encoding. workers: controls parallel TIFF encoding.
         Preserve mode retains source coding geometry (apart from NDPI regrouping).
@@ -1271,7 +1271,7 @@ def anonymize_wsi(
     Source padding pixels are retained; masks require explicit lossless mode.
     Lossless mode verifies every decoded tile against the supplied RGB pixels.
     Both exclude source descriptions, associated images and unreferenced file data.
-    ICC is excluded unless preserve_icc=True; this is an explicit review exception.
+    ICC is preserved by default; preserve_icc=False explicitly excludes it.
     Removing ICC can change color-managed appearance. Pixel review is a caller
     assertion, not an automated anonymity certification.
 
@@ -1376,6 +1376,13 @@ def anonymize_wsi(
             if preserve_icc and export_image:
                 with slide.read_region((0, 0), 0, (1, 1)) as region:
                     icc = region.info.get("icc_profile")
+                if not icc and not isinstance(slide, PhilipsSlide):
+                    try:
+                        with tifffile.TiffFile(source) as tif:
+                            if 34675 in tif.pages[0].tags:
+                                raise ValueError("ICC preservation is unavailable: source has an ICC tag that this reader cannot expose")
+                    except tifffile.TiffFileError:
+                        pass  # Non-TIFF readers expose their own color profiles.
                 if icc:
                     from io import BytesIO
                     from PIL import ImageCms
@@ -1665,7 +1672,8 @@ def _main():
     parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg", "jpeg2000", "philips", "native"), default="preserve")
     parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
     parser.add_argument("--keep-filename", action="store_true", help="Keep source basename with .tiff extension")
-    parser.add_argument("--preserve-icc", action="store_true", help="Copy original ICC; profile metadata requires separate review")
+    parser.add_argument("--preserve-icc", action=argparse.BooleanOptionalAction, default=True,
+                        help="Preserve original ICC by default; --no-preserve-icc explicitly excludes it")
     parser.add_argument("--pixels-reviewed", action="store_true")
     parser.add_argument("--redact", type=int, nargs=4, action="append", default=[], metavar=("X", "Y", "W", "H"))
     args = parser.parse_args()

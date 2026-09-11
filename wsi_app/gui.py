@@ -143,7 +143,7 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MeDIAuto Anonymization · 1.10.0 · 내부 연구용")
+        self.setWindowTitle("MeDIAuto Anonymization · 1.10.1 · 내부 연구용")
         self.setWindowIcon(QIcon(str(ASSET_ROOT / "icon.png")))
         self.resize(1240, 900)
         self.setMinimumSize(1050, 760)
@@ -288,6 +288,7 @@ class Window(QMainWindow):
         self.rename_output.setChecked(True)
         self.preserve_mpp = QCheckBox("실제 크기 정보 유지")
         self.preserve_icc = QCheckBox("원본 색상 프로파일 유지 (별도 검토)")
+        self.preserve_icc.setChecked(True)
         for control in (self.export_image, self.export_csv, self.include_filename, self.preserve_mpp):
             control.setChecked(True)
         option(self.export_image, "image", "영상 파일 저장", "1번은 호환 SVS·NDPI·Philips의 원본 형식(.svs / .ndpi / .isyntax)을 유지합니다. 2번은 호환 JPEG를 재사용한 TIFF, 3번은 읽은 RGB를 무손실 압축한 TIFF로 저장합니다. 목록 전체에서 지원되는 방식만 선택할 수 있습니다.\n\n조직 영상만 포함하며 원본의 라벨·매크로와 개인정보 메타데이터는 제외합니다. 해제하면 선택한 CSV만 저장합니다.", 0, 0)
@@ -313,7 +314,7 @@ class Window(QMainWindow):
         self.options_hint = QLabel()
         option(self.rename_output, "rename", "출력 파일명 변경", "체크: anonymous_<임의 ID> 이름으로 저장합니다.\n해제: 원본 이름을 유지합니다. 원본 형식 저장은 .svs / .ndpi / .isyntax, TIFF 변환은 .tiff 확장자를 사용합니다. 같은 이름이 있으면 _2, _3 등을 붙이며 기존 파일을 덮어쓰지 않습니다.\n\n원본 이름에 환자명·ID가 있으면 해제 시 결과 파일명에도 남습니다. 내부 메타데이터 제거는 그대로 적용합니다. CSV의 원본 파일명 포함 옵션과는 별개입니다.", 3, 1)
         self.options_hint.setWordWrap(True)
-        option(self.preserve_icc, "icc", "ICC 색상 프로파일", "체크하면 원본 조직 영상의 ICC를 TIFF 기본 페이지에 그대로 저장합니다. OpenSlide color_profile로 읽을 수 있습니다. Philips 원본 유지에서도 원본 색상 프로파일을 복사합니다. 제외하면 압축 블록은 같아도 표시 색상이 달라질 수 있습니다. 이 옵션은 프로파일 복사만 제어합니다.\n\nICC 내부 설명·제조사 정보 등도 그대로 복사되므로 개인정보가 없는지 별도 검토가 필요합니다. 결과는 ICC 검토 필요로 표시합니다. 원본에 ICC가 없으면 추가하지 않습니다. 기본값은 제외입니다.", 4, 0)
+        option(self.preserve_icc, "icc", "ICC 색상 프로파일", "기본값은 유지입니다. 원본 색상을 해석하는 ICC를 영상과 함께 저장하며 Philips 원본 형식 저장에도 적용합니다. 제외하면 압축 데이터가 같아도 색상이 달라질 수 있습니다. 원본에 ICC가 없으면 임의로 추가하지 않습니다. 원본에 있는데 보존할 수 없는 경우 오류로 안내합니다.\n\nICC 내부 설명·제조사 정보도 복사되므로 기존과 같이 별도 검토 상태로 기록합니다. 이 옵션은 프로파일 보존 여부이며 조직 픽셀을 다른 색공간으로 변환하지 않습니다.", 4, 0)
         self.options_hint.setObjectName("hint")
         options.addWidget(self.options_hint, 3, 0)
         self.advanced_toggle = QToolButton()
@@ -477,6 +478,7 @@ class Window(QMainWindow):
             hint = "CSV 정보만 저장합니다. 영상 변환·압축·익명화 검증은 수행하지 않습니다."
         else:
             hint = descriptions[self.storage_choice.currentData()]
+            hint += "\n원본 색상 프로파일: " + ("유지 (원본에 있는 경우)" if self.preserve_icc.isChecked() else "제외 · 표시 색상이 달라질 수 있음")
             blocked = [str(i + 1) + "번" for i, (_, mode) in enumerate(STORAGE_MODES) if reasons[mode]]
             if blocked:
                 hint += "\n현재 목록: " + ", ".join(blocked) + " 사용 불가 · ⓘ에서 이유 확인"

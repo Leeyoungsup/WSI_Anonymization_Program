@@ -1,5 +1,7 @@
 # WSI Anonymization Program
 
+**1.10.1: 원본 ICC 색상 프로파일을 기본으로 유지합니다.** GUI·Python 함수·CLI에 동일하게 적용하며 원본에 없는 ICC는 추가하지 않습니다. 제외하려면 `preserve_icc=False` 또는 CLI `--no-preserve-icc`를 명시하세요. ICC가 있지만 보존할 수 없는 경우 오류로 안내합니다.
+
 **1.10.0: SVS·NDPI 원본 형식 저장을 추가했습니다.** 원본 형식 유지 / 원본 압축을 유지한 TIFF / 무손실 TIFF를 선택합니다. 1번은 호환 SVS·NDPI·Philips를 각각 `.svs` / `.ndpi` / `.isyntax`로 저장하며 원본 조직 압축을 재사용합니다. 지원하지 않는 방식은 비활성화되고 ⓘ에 이유가 표시됩니다. [저장 방식 안내](docs/storage_modes.md), [SVS·NDPI 지원 범위와 API](docs/native_svs_ndpi.md)를 참고하세요.
 
 Philips 조직 압축 블록은 재압축 없이 복사하고 메타데이터를 새로 만듭니다. 첫 두 샘플은 약 105MB / 212MB로 원본과 거의 같은 크기를 유지했습니다. 범위·검증·함수 호출은 [Philips 원본 유지 가이드](docs/native_philips.md)를 참고하세요. `.isyntax`는 일반 OpenSlide로 열 수 없습니다. 출력 구조·MPP·ICC는 **세부 설정**에 있습니다.
@@ -102,7 +104,7 @@ python wsi_anonymizer.py input.ndpi output --single-image
 
 ## 익명화와 CSV
 
-모든 출력 레벨에서 원본 개인정보 태그·설명·JPEG APP/COM 부가정보를 제외합니다. ICC는 기본 제외이며 명시적으로 포함하면 프로파일 내부 정보의 별도 검토가 필요합니다. 원본 라벨·매크로·별도 썸네일·미참조 파일 영역은 복사하지 않습니다. 조직 영상에 직접 적힌 식별자는 별도 검토 대상입니다. `pixels_reviewed=True`는 호출자의 검토 확인이며 자동 인증이 아닙니다. ICC 제외로 색상 관리 뷰어의 표시가 달라질 수 있습니다.
+모든 출력 레벨에서 원본 개인정보 태그·설명·JPEG APP/COM 부가정보를 제외합니다. ICC는 기본 유지하며 프로파일 내부 정보는 별도 검토 대상으로 기록합니다. 원본 라벨·매크로·별도 썸네일·미참조 파일 영역은 복사하지 않습니다. 조직 영상에 직접 적힌 식별자는 별도 검토 대상입니다. `pixels_reviewed=True`는 호출자의 검토 확인이며 자동 인증이 아닙니다. ICC 제외로 색상 관리 뷰어의 표시가 달라질 수 있습니다.
 
 CSV는 UTF-8 BOM으로 저장하며 다음 기술 정보를 기록합니다.
 

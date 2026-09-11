@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(dir=ROOT / "artifacts") as folder:
     w.output.setText(str(root / "out"))
     w.export_image.setChecked(False)
     assert not w.rename_output.isEnabled()
-    assert not w.preserve_icc.isEnabled() and not w.preserve_icc.isChecked()
+    assert not w.preserve_icc.isEnabled() and w.preserve_icc.isChecked()
     w.export_csv.setChecked(False)
     assert not w.copy_button.isEnabled()
     w.start("copy")

@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix="philips_release_") as directory:
     code, event = run("inspect", "20260514_084959.i2syntax")
     assert code == 0 and event["data"]["errors"] == [], event
     for name in ("20260511_124345.i2syntax", "20260514_084959.i2syntax"):
-        code, event = run("copy", name, compression="philips", preserve_icc=True, include_filename=False)
+        code, event = run("copy", name, compression="philips", include_filename=False)
         assert code == 0, event
         report = event["data"]["report"]
         assert report["format"] == "philips-isyntax"

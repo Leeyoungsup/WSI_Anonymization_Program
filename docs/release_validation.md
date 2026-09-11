@@ -1,4 +1,15 @@
-# Windows EXE 1.10.0 내부 연구용 검증
+# Windows EXE 1.10.1 내부 연구용 검증
+
+2026-09-11: GUI, `anonymize_wsi()`, 워커 어댑터, CLI의 `preserve_icc` 기본값을 True로 변경했습니다. CLI `--no-preserve-icc` 및 API/GUI의 명시적 제외는 계속 지원합니다. ICC가 없으면 생성하지 않으며, 원본 TIFF 기본 페이지에 ICC가 있지만 리더에서 제공하지 못하면 오류로 안내합니다. ICC 포함 시 기존 별도 검토 상태를 유지합니다.
+
+- `tests/test_icc_defaults.py`: API/CLI 기본값의 ICC 원문 일치, 명시적 제외, 보고서 및 어댑터 기본값을 검증했습니다.
+- `tests/test_export_options.py`, `tests/test_native_formats.py`: GUI 기본 체크 상태, CSV 옵션, 읽기/보존 불가 ICC의 오류 처리와 기존 native 경로 검증을 통과했습니다.
+- 최종 EXE `tests/test_release.py`: 워커 옵션을 생략해도 ICC가 보존되며 원문이 일치하고, `preserve_icc=False`로 제외할 수 있음을 확인했습니다. 기존 TIFF/JPEG/JPEG 2000·CSV·취소도 통과했습니다.
+- `tests/test_philips_release.py`: ICC 옵션을 생략한 두 Philips 샘플의 native 저장·표본 픽셀 일치·재열기를 확인했습니다. 동봉 런타임을 Python/Conda 없는 PATH와 가짜 홈에서 시험했습니다.
+- `tests/test_native_batch_gui.py --frozen`: 기본 체크 상태로 실제 SVS·NDPI·Philips를 한 목록에서 저장했습니다. ICC가 있는 SVS/Philips는 보존되고, ICC가 없는 NDPI는 추가하지 않았습니다. 각 파일의 43/88/24개 표본 픽셀 일치와 원본 SHA256 미변경을 확인했습니다.
+- 최종 EXE 내부 GUI·워커·어댑터·독립 엔진의 바이트코드를 현재 소스와 비교하고 ZIP CRC 및 소스/실행 파일/런타임 해시를 검증했습니다.
+
+## 1.10.0 이전 검증 기록
 
 2026-09-11: `compression="native"`와 GUI 1번에 호환 JPEG SVS·NDPI 원본 형식 저장을 추가했습니다. 기존 SVS→TIFF/NDPI→TIFF 기능과 Philips native 기능은 유지합니다. 지원 조건과 검증 범위는 `native_svs_ndpi.md`를 참고하세요.
 

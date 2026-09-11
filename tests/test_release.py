@@ -49,6 +49,13 @@ with tempfile.TemporaryDirectory(prefix="release_test_") as temporary:
 
     assert run("inspect")["data"]["errors"] == []
     preserved = run()["data"]
+    assert preserved["report"]["icc_profile_copied"]  # Default worker/adapter option.
+    with openslide.OpenSlide(preserved["file"]) as slide:
+        assert slide.read_region((0, 0), 0, (1, 1)).info["icc_profile"] == icc
+    excluded = run(preserve_icc=False)["data"]
+    assert not excluded["report"]["icc_profile_copied"]
+    with openslide.OpenSlide(excluded["file"]) as slide:
+        assert not slide.read_region((0, 0), 0, (1, 1)).info.get("icc_profile")
     assert preserved["report"]["compression"] == "jpeg-preserved"
     assert preserved["report"]["preserved_levels"] == 2
     assert preserved["report"]["generated_levels"] == 1
