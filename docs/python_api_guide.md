@@ -1,4 +1,6 @@
-1.9.0 Philips 원본 유지: `anonymize_wsi(input_path, output_dir, compression="philips")`로 .isyntax를 저장합니다. 고유 압축 블록을 그대로 보존하며 추가 손실이 없습니다. SDK 표시 색상은 ICC 포함 여부에 따라 달라집니다. TIFF 출력 옵션과 별도이며 자세한 내용은 [원본 유지 가이드](native_philips.md)를 참고하세요. `pyramid=True`, `preserve_mpp=True`, `redactions=()`가 필요합니다. CSV 전용은 기존과 같이 `export_image=False`입니다.
+1.10.0 원본 형식 유지: `anonymize_wsi(input_path, output_dir, compression="native")`를 사용합니다. 호환 JPEG SVS·NDPI와 Philips를 각각 `.svs` / `.ndpi` / `.isyntax`로 저장합니다. 원본 조직 압축과 피라미드 단계를 유지하며 메타데이터·컨테이너를 새로 작성합니다. `pyramid=True`, `preserve_mpp=True`, `redactions=()`가 필요합니다. SVS·NDPI 구현도 이 함수 파일에 포함되어 있습니다. 상세 제약과 검증 범위는 [SVS·NDPI 원본 형식 가이드](native_svs_ndpi.md)를 참고하세요.
+
+기존 Philips 전용 `compression="philips"`도 계속 지원합니다. SDK 표시 색상은 ICC 포함 여부에 따라 달라집니다. [Philips 원본 유지 가이드](native_philips.md)를 참고하세요. CSV 전용은 기존과 같이 `export_image=False`입니다. 아래는 이전 버전부터 이어지는 TIFF/API 참고 설명입니다. 최신 GUI 선택은 [저장 방식 안내](storage_modes.md)를 기준으로 합니다.
 
 JPEG 2000 lossless (v1.8.2)
 -------------------------

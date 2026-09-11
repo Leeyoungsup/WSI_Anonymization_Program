@@ -530,6 +530,237 @@ def _jpeg_entropy(data, *, restart_segment=False):
         raise ValueError("Unsupported marker inside JPEG scan")
 
 
+def _ndpi_plan(tif):
+    """Accept only a known single-plane baseline JPEG NDPI layout."""
+    if not tif.is_ndpi or tif.is_bigtiff or tif.byteorder != "<":
+        raise ValueError("Native NDPI requires little-endian NDPI directories")
+    plans = []
+    for page in tif.pages:
+        lens = float(page.tags[65421].value)
+        if lens in (-1, -2):  # Label/macro/coverage map: never copy.
+            continue
+        if not math.isfinite(lens) or not 0 < lens <= 1000 or page.tags[65424].value != 0:
+            raise ValueError("Native NDPI supports a single focal plane only")
+        if (page.compression != 7 or page.photometric != 6 or page.samplesperpixel != 3
+                or page.bitspersample != 8 or page.planarconfig != 1 or page.jpegtables):
+            raise ValueError("Native NDPI requires self-contained baseline RGB/YCbCr JPEG")
+        offsets, sizes = page.tags[273].value, page.tags[279].value
+        if len(offsets) != 1 or len(sizes) != 1:
+            raise ValueError("Native NDPI requires one JPEG strip per tissue level")
+        offset, size = int(offsets[0]), int(sizes[0])
+        if offset < 12 or size < 4 or offset + size > tif.filehandle.size:
+            raise ValueError("NDPI JPEG strip is outside the file")
+        tif.filehandle.seek(offset)
+        clean, header_size, frame, restart = _jpeg_header(tif.filehandle.read(min(size, 1024**2)))
+        width, height = page.imagewidth, page.imagelength
+        if not 0 < width < 2**31 or not 0 < height < 2**31 or frame[2] != (0x11, 0x11, 0x11):
+            raise ValueError("Unsupported NDPI dimensions or JPEG sampling")
+        if frame[:2] != (height, width) and not (max(width, height) > 65535 and 0 in frame[:2]):
+            raise ValueError("NDPI TIFF/JPEG dimensions disagree")
+        count = 1
+        if restart:
+            if width % (restart * 8) or height % 8:
+                raise ValueError("Native NDPI requires complete JPEG restart segments")
+            count = width // (restart * 8) * (height // 8)
+        elif max(width, height) > 65535:
+            raise ValueError("Large NDPI images require JPEG restart markers")
+        resolution = []
+        for code in (282, 283):
+            pair = tuple(int(v) for v in page.tags[code].value)
+            if len(pair) != 2 or any(not 0 < v < 2**32 for v in pair):
+                raise ValueError("Invalid NDPI resolution")
+            resolution.append(pair)
+        unit = int(page.tags[296].value)
+        if unit not in (2, 3) or (plans and width >= plans[-1]["width"]):
+            raise ValueError("Unsupported NDPI resolution or tissue level ordering")
+        plans.append(dict(width=width, height=height, lens=lens, offset=offset, size=size,
+                          header=clean, header_size=header_size, restart_count=count,
+                          resolution=resolution, unit=unit, page_index=page.index))
+    if not plans or plans[0]["page_index"] != 0:
+        raise ValueError("NDPI primary tissue image is missing")
+    return plans
+
+
+def native_export_supported(path):
+    """Header-only availability probe; export performs full validation."""
+    path = Path(path)
+    if path.suffix.lower() in PHILIPS_EXTENSIONS:
+        return True
+    try:
+        with tifffile.TiffFile(path) as tif:
+            if path.suffix.lower() == ".ndpi":
+                _ndpi_plan(tif)
+                return True
+            if path.suffix.lower() == ".svs" and tif.pages[0].description.startswith("Aperio"):
+                pages = [page for page in tif.pages if page.is_tiled]
+                return bool(pages) and all(page.compression == 7 and page.photometric == 6
+                    and page.planarconfig == 1 and not page.jpegtables and page.tilewidth % 16 == 0
+                    and page.tilelength % 16 == 0 for page in pages)
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        pass
+    return False
+
+
+def _ndpi_directory(stream, tags, previous_link):
+    """Write NDPI's 12-byte TIFF entries plus 64-bit next/offset extensions.
+
+    All values are freshly constructed technical fields, never raw source tags.
+    tags: (code, TIFF type, count, encoded bytes or 64-bit inline integer).
+    """
+    if stream.tell() % 2:
+        stream.write(b"\0")
+    start = stream.tell()
+    tags = sorted(tags)
+    values_start = start + 2 + len(tags) * 12 + 8 + len(tags) * 4
+    entries, high, values = bytearray(), bytearray(), bytearray()
+    for code, dtype, count, data in tags:
+        if isinstance(data, int):
+            value = data
+        elif len(data) <= 4 and dtype != 2:
+            value = int.from_bytes(data.ljust(4, b"\0"), "little")
+        else:
+            value = values_start + len(values)
+            values.extend(data)
+            if len(values) % 2:
+                values.append(0)
+        if not 0 <= value < 2**64 or not 0 < count < 2**32:
+            raise ValueError("NDPI field is out of range")
+        entries.extend(struct.pack("<HHII", code, dtype, count, value & 0xffffffff))
+        high.extend(struct.pack("<I", value >> 32))
+    stream.write(struct.pack("<H", len(tags)) + entries + b"\0" * 8 + high + values)
+    end = stream.tell()
+    stream.seek(previous_link)
+    stream.write(struct.pack("<Q", start))
+    stream.seek(end)
+    return start + 2 + len(tags) * 12
+
+
+def _copy_ndpi_scan(source, output, plan, notify):
+    """Stream a sanitized JPEG and regenerate the restart index from its bytes."""
+    header = plan["header"]
+    digest = hashlib.sha256(header)
+    output.write(header)
+    source.seek(plan["offset"] + plan["header_size"])
+    remaining = plan["size"] - plan["header_size"]
+    read_count, carry, ended = 0, b"", False
+    starts = [len(header)]
+    while remaining:
+        notify(read_count, plan["size"])
+        chunk = source.read(min(8 * 1024**2, remaining))
+        if not chunk:
+            raise ValueError("Truncated NDPI JPEG scan")
+        data = carry + chunk
+        base = read_count - len(carry)
+        read_count += len(chunk)
+        remaining -= len(chunk)
+        carry = b""
+        position = 0
+        while True:
+            position = data.find(b"\xff", position)
+            if position < 0:
+                break
+            if position + 1 == len(data):
+                carry = b"\xff"
+                break
+            code = data[position + 1]
+            if code == 0:
+                pass
+            elif 0xD0 <= code <= 0xD7:
+                if code != 0xD0 + ((len(starts) - 1) % 8):
+                    raise ValueError("NDPI JPEG restart sequence is invalid")
+                starts.append(len(header) + base + position + 2)
+                if len(starts) > plan["restart_count"]:
+                    raise ValueError("NDPI JPEG contains too many restart segments")
+            elif code == 0xD9:
+                if remaining or position + 2 != len(data):
+                    raise ValueError("Unexpected data after NDPI JPEG end marker")
+                ended = True
+            else:
+                raise ValueError("Unsupported marker inside NDPI JPEG scan")
+            position += 2
+        output.write(chunk)
+        digest.update(chunk)
+    if carry or not ended or len(starts) != plan["restart_count"]:
+        raise ValueError("NDPI JPEG restart index/end marker mismatch")
+    return digest.digest(), starts
+
+
+def _write_ndpi_native(source, target, emit, icc=None):
+    # OpenSlide's NDPI backend does not expose an ICC profile. Avoid falsely
+    # claiming that an unverified profile was preserved for this native path.
+    if icc:
+        raise ValueError("Native NDPI ICC readback is not supported")
+    records, verified = [], 0
+    with tifffile.TiffFile(source) as tif, target.open("w+b") as output:
+        plans = _ndpi_plan(tif)
+        total = sum(p["size"] for p in plans)
+        if shutil.disk_usage(target.parent).free < total + 64 * 1024**2:
+            raise OSError("Not enough space for native NDPI export")
+        output.write(b"II\x2a\0" + b"\0" * 8)
+        link, completed = 4, 0
+        for plan in plans:
+            offset = output.tell()
+            digest, starts = _copy_ndpi_scan(tif.filehandle, output, plan,
+                lambda done, size: emit("write", completed + done, total))
+            size = output.tell() - offset
+            def field(code, dtype, fmt, *values):
+                return (code, dtype, len(values), struct.pack("<" + fmt * len(values), *values))
+            tags = [field(256, 4, "I", plan["width"]), field(257, 4, "I", plan["height"]),
+                    field(258, 3, "H", 8, 8, 8), field(259, 3, "H", 7), field(262, 3, "H", 6),
+                    (271, 2, 10, b"Hamamatsu\0"), (273, 4, 1, offset), field(277, 3, "H", 3),
+                    field(278, 4, "I", plan["height"]), (279, 4, 1, size),
+                    (282, 5, 1, struct.pack("<II", *plan["resolution"][0])),
+                    (283, 5, 1, struct.pack("<II", *plan["resolution"][1])),
+                    field(284, 3, "H", 1), field(296, 3, "H", plan["unit"]),
+                    field(530, 3, "H", 1, 1), field(532, 4, "I", 0, 255, 128, 255, 128, 255),
+                    field(65420, 3, "H", 1), field(65421, 11, "f", plan["lens"]),
+                    field(65424, 9, "i", 0)]
+            index = np.asarray(starts, dtype="<u8")
+            if len(starts) > 1:
+                tags.append((65426, 4, len(starts), (index & 0xffffffff).astype("<u4").tobytes()))
+            if int(index[-1]) >= 2**32:
+                tags.append((65432, 4, len(starts), (index >> 32).astype("<u4").tobytes()))
+            link = _ndpi_directory(output, tags, link)
+            records.append((offset, size, digest, {tag[0]: tag for tag in tags}))
+            verified += len(starts)
+            completed += plan["size"]
+        emit("write", total, total)
+    # Validate every byte of every copied JPEG, all index/technical field bytes,
+    # and the exact tag allowlist before OpenSlide sampled decoding/publication.
+    with tifffile.TiffFile(target) as check:
+        if not check.is_ndpi or len(check.pages) != len(records):
+            raise ValueError("Native NDPI directory readback failed")
+        for i, (page, record) in enumerate(zip(check.pages, records)):
+            offset, size, expected, tags = record
+            if set(page.tags.keys()) != set(tags):
+                raise ValueError("Unexpected native NDPI metadata")
+            for code, (_, dtype, count, data) in tags.items():
+                tag = page.tags[code]
+                if int(tag.dtype) != dtype or tag.count != count:
+                    raise ValueError("Native NDPI tag structure changed")
+                if isinstance(data, int):
+                    if tag.value != (data,):
+                        raise ValueError("Native NDPI strip offset/size changed")
+                else:
+                    check.filehandle.seek(tag.valueoffset)
+                    if check.filehandle.read(len(data)) != data:
+                        raise ValueError(f"Native NDPI technical field/index changed (tag {code})")
+            digest = hashlib.sha256()
+            check.filehandle.seek(offset)
+            remaining = size
+            while remaining:
+                emit("verify", i + (size - remaining) / size, len(records))
+                chunk = check.filehandle.read(min(8 * 1024**2, remaining))
+                if not chunk:
+                    raise ValueError("Truncated output NDPI strip")
+                digest.update(chunk)
+                remaining -= len(chunk)
+            if digest.digest() != expected:
+                raise ValueError("Native NDPI JPEG data changed")
+        emit("verify", 1, 1)
+    return verified, len(records)
+
+
 def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, append=False, description=None, icc=None):
     """Repackage JPEG coding data, never invoke an encoder.
 
@@ -798,7 +1029,7 @@ def _append_overview(target, openslide, mpp, compression, notify):
     return (width, height), total
 
 
-def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, description=None, icc=None):
+def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, description=None, icc=None, *, generate=True):
     """Reuse only recognized tissue levels; never copy label/macro/thumbnail IFDs."""
     dimensions = [slide.dimensions]
     candidates = []
@@ -819,7 +1050,7 @@ def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, de
     candidates.sort(key=lambda item: item[1][0], reverse=True)
     end = candidates[-1][1] if candidates else dimensions[0]
     generated_count = 0
-    while max(end) > 512:
+    while generate and max(end) > 512:
         end = (math.ceil(end[0] / 4), math.ceil(end[1] / 4))
         generated_count += 1
     steps = len(candidates) + generated_count
@@ -838,7 +1069,7 @@ def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, de
         dimensions.append(shape)
         done += 1
     preserved = len(dimensions)
-    while max(dimensions[-1]) > 512:
+    while generate and max(dimensions[-1]) > 512:
         shape, tiles = _append_overview(target, openslide, mpp, compression, notify)
         verified += tiles
         dimensions.append(shape)
@@ -977,7 +1208,17 @@ def anonymize_wsi(
     progress: Callable[[dict], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> dict:
-    """Export tissue as TIFF, or native iSyntax with compression='philips'.
+    """Export tissue as TIFF, or retain a supported native WSI container.
+
+    compression='native': supported baseline-JPEG SVS/NDPI or Philips iSyntax.
+        SVS/NDPI retain their actual format, tissue levels and coding data;
+        Philips is written as .isyntax. Rebuild technical fields, exclude raw
+        metadata/associated images, and never re-encode native tissue pixels.
+        Requires pyramid=True, preserve_mpp=True and no redactions. NDPI verifies
+        every JPEG byte and regenerated index, then samples every OpenSlide level;
+        it does not decode every image pixel. SVS also decodes every output tile.
+        NDPI is restricted to single-plane baseline 8-bit 4:4:4 JPEG. Native
+        NDPI ICC preservation is unavailable with this OpenSlide reader.
 
     compression='philips': Philips iSyntax/i2syntax only. Rebuild a new .isyntax
         container with whitelisted technical XML and original compressed WSI blocks.
@@ -1058,8 +1299,17 @@ def anonymize_wsi(
         raise ValueError("workers must be between 1 and 16")
     if not isinstance(pixels_reviewed, bool):
         raise TypeError("pixels_reviewed must be a boolean")
-    if compression not in ("preserve", "lossless", "jpeg", "jpeg2000", "philips"):
-        raise ValueError("compression must be preserve, lossless, jpeg, jpeg2000 or philips")
+    if compression not in ("preserve", "lossless", "jpeg", "jpeg2000", "philips", "native"):
+        raise ValueError("compression must be preserve, lossless, jpeg, jpeg2000, philips or native")
+    native = compression == "native" and export_image
+    native_ndpi = native and source.suffix.lower() == ".ndpi"
+    if native:
+        if redactions or not pyramid or not preserve_mpp:
+            raise ValueError("Native export preserves pixels, levels and calibration; use TIFF for masks or altered geometry")
+        if not native_export_supported(source):
+            raise ValueError("This input layout does not support native anonymized export")
+        if source.suffix.lower() in PHILIPS_EXTENSIONS:
+            compression = "philips"
     if compression == "philips" and export_image:
         if source.suffix.lower() not in PHILIPS_EXTENSIONS:
             raise ValueError("Native Philips export requires iSyntax/i2syntax input")
@@ -1108,6 +1358,10 @@ def anonymize_wsi(
             if preserve_mpp and all(v is not None for v in source_mpp):
                 mpp = source_mpp
             source_vendor = _source_vendor(slide)
+            if native and source.suffix.lower() in {".svs", ".ndpi"}:
+                expected_vendor = "hamamatsu" if native_ndpi else "aperio"
+                if slide.properties.get("openslide.vendor") != expected_vendor:
+                    raise ValueError("Input extension does not match its actual native format")
             technical = _technical_metadata(dimensions[0], mpp, objective, source_vendor)
             source_technical = _technical_metadata(dimensions[0], source_mpp, objective, source_vendor)
             physical = {key: source_technical[key] for key in ("physical_width_mm", "physical_height_mm")}
@@ -1137,7 +1391,8 @@ def anonymize_wsi(
             total = sum(tiles_per_level)
             folder = _run_folder(base, run_id)
             output_stem = "anonymous_" + uuid.uuid4().hex if rename_output else source.stem
-            target = folder / (output_stem + ".tiff")
+            output_extension = source.suffix.lower() if native else ".tiff"
+            target = folder / (output_stem + output_extension)
             if not export_image:
                 emit("write", 0, 1)
                 row = {
@@ -1165,10 +1420,17 @@ def anonymize_wsi(
                         "pixel_review_asserted_by_caller": pixels_reviewed, "size_bytes": 0,
                         "compression": None, "mpp": list(source_mpp), "objective_power": objective,
                         "technical_metadata": source_technical}
-            fd, name = tempfile.mkstemp(prefix=".wsi_", suffix=".partial.tiff", dir=target.parent)
+            fd, name = tempfile.mkstemp(prefix=".wsi_", suffix=".partial" + output_extension, dir=target.parent)
             os.close(fd)
             temporary = Path(name)
-            if compression == "preserve":
+            stored_pages = None
+            if native_ndpi:
+                if preserve_icc:
+                    with tifffile.TiffFile(source) as tif:
+                        if any(34675 in page.tags for page in tif.pages):
+                            raise ValueError("Native NDPI ICC preservation is not supported by this reader")
+                verified, stored_pages = _write_ndpi_native(source, temporary, emit, icc)
+            elif compression in ("preserve", "native"):
                 verified = _preserve_jpeg(source, temporary, dimensions, mpp, emit, description=description, icc=icc)
             elif compression == "jpeg":
                 verified = _write_jpeg(slide, temporary, mpp, boxes, tile_size, emit, description, icc)
@@ -1241,29 +1503,40 @@ def anonymize_wsi(
                                 emit("verify", verified, total)
                         if count != tiles_per_level[level] or digest.hexdigest() != hashes[level]:
                             raise ValueError("Decoded output pixels do not match exported pixels")
-            preserved_levels = 1 if compression == "preserve" else 0
+            preserved_levels = 1 if compression in ("preserve", "native") else 0
             generated_levels = 0
-            if pyramid:
+            if native_ndpi:
+                dimensions = list(slide.level_dimensions)
+                preserved_levels = len(dimensions)
+            elif pyramid:
                 dimensions, extra_verified, preserved_levels, generated_levels = _append_pyramid(
-                    source, temporary, slide, openslide, mpp, compression, emit, description, icc)
+                    source, temporary, slide, openslide, mpp, "preserve" if native else compression,
+                    emit, description, icc, generate=not native)
                 verified += extra_verified
+            if native and dimensions != list(slide.level_dimensions):
+                raise ValueError("Native export could not preserve all original tissue levels")
             with openslide.OpenSlide(str(temporary)) as check:
                 if list(check.level_dimensions) != dimensions or check.associated_images:
                     raise ValueError("Output pyramid/level readback failed")
-                if check.properties.get("openslide.vendor") != "aperio":
-                    raise ValueError("Output is not an Aperio-compatible tiled TIFF")
+                if check.properties.get("openslide.vendor") != ("hamamatsu" if native_ndpi else "aperio"):
+                    raise ValueError("Output native vendor/format validation failed")
                 with check.read_region((0, 0), 0, (64, 64)) as region:
                     region.load()
                     if region.info.get("icc_profile") != icc:
                         raise ValueError("OpenSlide ICC readback failed")
                 if _numeric_property(check, "openslide.objective-power") != objective:
                     raise ValueError("Output objective-power validation failed")
+                if native:
+                    for key in ("openslide.mpp-x", "openslide.mpp-y"):
+                        if _numeric_property(check, key) != _numeric_property(slide, key):
+                            raise ValueError("Native MPP readback changed")
                 if pyramid:
                     with check.get_thumbnail((512, 512)) as thumbnail:
                         thumbnail.load()
                         if max(thumbnail.size) > 512:
                             raise ValueError("Output thumbnail validation failed")
-                if compression == "preserve":
+                sampled_regions = 0
+                if compression in ("preserve", "native"):
                     width, height = dimensions[0]
                     size = (min(256, width), min(256, height))
                     for y in np.linspace(0, height - size[1], 5, dtype=int):
@@ -1274,6 +1547,19 @@ def anonymize_wsi(
                                     check.read_region((int(x), int(y)), 0, size) as b:
                                 if not np.array_equal(np.asarray(a), np.asarray(b)):
                                     raise ValueError("Source/output sampled pixels differ")
+                                sampled_regions += 1
+                    if native:
+                        for level, (width, height) in enumerate(dimensions[1:], 1):
+                            size = (min(128, width), min(128, height))
+                            downsample = slide.level_downsamples[level]
+                            for y in np.linspace(0, height - size[1], 3, dtype=int):
+                                for x in np.linspace(0, width - size[0], 3, dtype=int):
+                                    emit("finalize", level, len(dimensions))
+                                    location = (int(x * downsample), int(y * downsample))
+                                    with slide.read_region(location, level, size) as a, check.read_region(location, level, size) as b:
+                                        if not np.array_equal(np.asarray(a), np.asarray(b)):
+                                            raise ValueError("Native source/output pyramid pixels differ")
+                                    sampled_regions += 1
             if pyramid:
                 emit("finalize", 1, 1)
             stat_after = source.stat()
@@ -1285,6 +1571,10 @@ def anonymize_wsi(
             audit = _removal_audit(before_inventory, _inventory(temporary), rename_output=rename_output,
                                   include_filename=include_filename, export_csv=export_csv,
                                   icc=icc, reviewed=pixels_reviewed)
+            if native:
+                for entry in audit["entries"]:
+                    if entry["item"] == "filename" and not rename_output:
+                        entry["after"] = "source_stem_" + output_extension[1:]
             if isinstance(slide, PhilipsSlide):
                 audit["scope"] = "Philips SDK associated-image inventory; source XML excluded by policy; no patient-field detection"
                 audit["entries"].append({"item": "philips_metadata", "status": "excluded_by_policy",
@@ -1302,11 +1592,11 @@ def anonymize_wsi(
                     if rename_output:
                         raise
                     suffix += 1
-                    target = folder / f"{output_stem}_{suffix}.tiff"
+                    target = folder / f"{output_stem}_{suffix}{output_extension}"
             temporary = None
             result = {
                 "output_path": str(target), "directory": str(folder),
-                "format": "pyramidal-bigtiff" if pyramid else "single-page-bigtiff",
+                "format": ("hamamatsu-ndpi" if native_ndpi else "aperio-svs") if native else ("pyramidal-bigtiff" if pyramid else "single-page-bigtiff"),
                 "pyramid": pyramid, "preserved_levels": preserved_levels, "generated_levels": generated_levels,
                 "thumbnail_verified": pyramid,
                 "status": "metadata_clean_pixels_reviewed" if pixels_reviewed else "metadata_clean_pixel_review_required",
@@ -1317,23 +1607,28 @@ def anonymize_wsi(
                 "technical_metadata": technical,
                 "anonymization_audit": audit,
                 "mpp": list(mpp) if mpp else None,
-                "compression": {"preserve": "jpeg-preserved", "lossless": "deflate-lossless", "jpeg": "jpeg-reencoded-q90", "jpeg2000": "jpeg2000-lossless"}[compression],
+                "compression": {"native": "jpeg-preserved", "preserve": "jpeg-preserved", "lossless": "deflate-lossless", "jpeg": "jpeg-reencoded-q90", "jpeg2000": "jpeg2000-lossless"}[compression],
                 "additional_lossy_compression": compression == "jpeg",
                 "jpeg_quality": 90 if compression == "jpeg" else None,
-                "all_output_tiles_verified": True, "verified_tiles": verified,
+                "all_output_tiles_verified": not native_ndpi, "verified_tiles": verified,
+                "all_compressed_blocks_verified": compression in ("preserve", "native"),
                 "verification": "compressed-sha256-and-all-tiles-decode" if compression in ("preserve", "jpeg") else
                                 ("base-pixels-sha256-and-pyramid-compressed-sha256" if pyramid else "all-decoded-pixels-sha256"),
-                "source_output_pixel_regions_verified": 25 if compression == "preserve" else 0,
+                "source_output_pixel_regions_verified": sampled_regions,
                 "source_metadata_copied": False, "associated_images_copied": False,
-                "source_compressed_payload_copied": compression == "preserve",
-                "jpeg_app_com_removed": compression in ("preserve", "jpeg"),
-                "reencoded": compression != "preserve" or generated_levels > 0,
-                "base_image_reencoded": compression != "preserve", "icc_profile_copied": bool(icc),
+                "source_compressed_payload_copied": compression in ("preserve", "native"),
+                "jpeg_app_com_removed": compression in ("preserve", "native", "jpeg"),
+                "reencoded": compression not in ("preserve", "native") or generated_levels > 0,
+                "base_image_reencoded": compression not in ("preserve", "native"), "icc_profile_copied": bool(icc),
                 "icc_profile_bytes": len(icc) if icc else 0, "source_vendor": source_vendor,
                 "representation": ("Philips SDK display view, 8-bit RGB; not raw internal samples" if isinstance(slide, PhilipsSlide)
                                    else "OpenSlide 2D RGB; not all focal planes/channels"),
                 "size_bytes": target.stat().st_size,
             }
+            if native:
+                result["native_format_preserved"] = True
+                result["verification"] = "all-native-jpeg-sha256-and-sampled-all-levels-decode" if native_ndpi else "compressed-sha256-and-all-tiles-decode"
+                result["stored_tissue_pages"] = stored_pages if native_ndpi else len(dimensions)
             if isinstance(slide, PhilipsSlide):
                 result["philips_display_origin"] = slide.display_origin
             if icc:
@@ -1343,7 +1638,7 @@ def anonymize_wsi(
                 "original_filename": source.name if include_filename else "", "output_filename": target.name,
                 "source_format": source.suffix.lower(), "mpp_x_um": source_mpp[0], "mpp_y_um": source_mpp[1],
                 "width_px": dimensions[0][0], "height_px": dimensions[0][1],
-                "objective_power": objective, "source_level_count": source_level_count, "output_pages": len(dimensions),
+                "objective_power": objective, "source_level_count": source_level_count, "output_pages": stored_pages or len(dimensions),
                 "source_size_bytes": stat_before.st_size, "output_size_bytes": result["size_bytes"],
                 "compression": result["compression"], "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "status": result["status"], "verified_tiles": verified,
@@ -1367,7 +1662,7 @@ def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
     parser.add_argument("output", nargs="?")
-    parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg", "jpeg2000", "philips"), default="preserve")
+    parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg", "jpeg2000", "philips", "native"), default="preserve")
     parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
     parser.add_argument("--keep-filename", action="store_true", help="Keep source basename with .tiff extension")
     parser.add_argument("--preserve-icc", action="store_true", help="Copy original ICC; profile metadata requires separate review")

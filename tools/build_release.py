@@ -11,7 +11,7 @@ import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 NAME = "WSI_Anonymization-" + VERSION + "-Windows-x64-Research"
 
 
@@ -40,6 +40,8 @@ def main():
     shutil.copy2(ROOT / "docs" / "release_readme.txt", folder / "READ_ME.txt")
     shutil.copy2(ROOT / "docs" / "philips_support.md", folder / "PHILIPS.md")
     shutil.copy2(ROOT / "docs" / "native_philips.md", folder / "NATIVE_PHILIPS.md")
+    shutil.copy2(ROOT / "docs" / "storage_modes.md", folder / "STORAGE_MODES.md")
+    shutil.copy2(ROOT / "docs" / "native_svs_ndpi.md", folder / "NATIVE_SVS_NDPI.md")
     validation = ROOT / "docs" / "release_validation.md"
     if validation.exists():
         shutil.copy2(validation, folder / "VALIDATION.md")
@@ -100,6 +102,8 @@ def main():
     source_files += sorted((ROOT / "philips_bridge").glob("*.py"))
     source_files += [ROOT / "docs" / "philips_support.md", ROOT / "requirements-philips.txt"]
     source_files += [ROOT / "docs" / "native_philips.md"]
+    source_files += [ROOT / "docs" / "storage_modes.md"]
+    source_files += [ROOT / "docs" / "native_svs_ndpi.md"]
     source_files += [ROOT / "tools" / name for name in ("inspect_samples.py", "check_openslide.py", "build_release.py", "build_philips_runtime.py")]
     source_files += [ROOT / "docs" / "release_readme.txt"]
     source_files += [ROOT / "logo" / name for name in ("logo.png", "icon.png")]

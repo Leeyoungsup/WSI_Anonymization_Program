@@ -1,8 +1,8 @@
 # WSI Anonymization Program
 
-**1.9.0: Philips 원본 압축 유지와 쉬운 저장 방식 선택을 추가했습니다.** 기본 **원본 유지**는 Philips를 `.isyntax`, 호환 SVS/NDPI를 `.tiff`로 저장합니다. Philips 조직 압축 블록은 재압축 없이 복사하고 메타데이터를 새로 만듭니다. 첫 두 샘플은 약 105MB / 212MB로 원본과 거의 같은 크기를 유지했습니다. 자세한 범위·검증·함수 호출은 [Philips 원본 유지 가이드](docs/native_philips.md)를 참고하세요.
+**1.10.0: SVS·NDPI 원본 형식 저장을 추가했습니다.** 원본 형식 유지 / 원본 압축을 유지한 TIFF / 무손실 TIFF를 선택합니다. 1번은 호환 SVS·NDPI·Philips를 각각 `.svs` / `.ndpi` / `.isyntax`로 저장하며 원본 조직 압축을 재사용합니다. 지원하지 않는 방식은 비활성화되고 ⓘ에 이유가 표시됩니다. [저장 방식 안내](docs/storage_modes.md), [SVS·NDPI 지원 범위와 API](docs/native_svs_ndpi.md)를 참고하세요.
 
-화면에서는 **원본 유지 / 화질 보존 / 용량 줄이기**를 선택합니다. 코덱 이름과 출력 구조·MPP·ICC는 **세부 설정**으로 옮겼습니다. `.isyntax`는 일반 OpenSlide로 열 수 없으므로 TIFF가 필요한 경우 저장 방식을 바꾸세요.
+Philips 조직 압축 블록은 재압축 없이 복사하고 메타데이터를 새로 만듭니다. 첫 두 샘플은 약 105MB / 212MB로 원본과 거의 같은 크기를 유지했습니다. 범위·검증·함수 호출은 [Philips 원본 유지 가이드](docs/native_philips.md)를 참고하세요. `.isyntax`는 일반 OpenSlide로 열 수 없습니다. 출력 구조·MPP·ICC는 **세부 설정**에 있습니다.
 
 EXE 없이 함수로 사용하려면 [Python API 사용 가이드](docs/python_api_guide.md)를 참고하세요. 설치, 단일·일괄 실행, 전체 옵션, 반환값, OpenSlide 읽기와 제거 내역 확인 예제를 제공합니다.
 

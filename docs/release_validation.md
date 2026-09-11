@@ -1,6 +1,36 @@
-# Windows EXE 1.9.0 내부 연구용 검증
+# Windows EXE 1.10.0 내부 연구용 검증
+
+2026-09-11: `compression="native"`와 GUI 1번에 호환 JPEG SVS·NDPI 원본 형식 저장을 추가했습니다. 기존 SVS→TIFF/NDPI→TIFF 기능과 Philips native 기능은 유지합니다. 지원 조건과 검증 범위는 `native_svs_ndpi.md`를 참고하세요.
+
+- `tests/test_native_formats.py`: 합성 SVS·NDPI를 OpenSlide로 재열어 실제 벤더·레벨·배율·MPP·픽셀을 대조했습니다. JPEG COM과 TIFF/private 태그에 넣은 합성 식별 문자열의 제거, 라벨 제외, CSV 원본명 제외, 파일명 충돌, 취소, 잘못된 JPEG 스캔·옵션·지원하지 않는 NDPI ICC 처리, 미완성 파일 정리를 통과했습니다. NDPI 4GiB 초과 오프셋은 sparse 입력의 작은 JPEG로 검증했으며 단일 4GiB 초과 JPEG 전체 시험은 아닙니다.
+- `tests/test_native_batch_gui.py`와 `--frozen`: 제공된 SVS·NDPI·Philips 첫 샘플을 한 목록/날짜 폴더로 원본 형식 내보내기 했습니다. 최종 EXE에서 각각 `aperio-svs`, `hamamatsu-ndpi`, `philips-isyntax`로 완료했습니다. 원본 SHA-256은 전후 동일하며 ICC 포함 SVS 1,079,205,863 bytes, NDPI 2,111,362,048 bytes, ICC 포함 Philips 105,055,028 bytes였습니다. 각 입력의 43/88/24개 표본 영역 일치, 원본 조직 레벨·압축 유지, 재인코딩·추가 레벨 생성 없음, 공통 CSV를 확인했습니다.
+- SVS는 모든 출력 JPEG 타일의 압축 데이터 해시와 디코딩을 검증합니다. NDPI는 모든 JPEG 바이트 해시와 새 인덱스·기술 필드를 검증하고 모든 OpenSlide 레벨에서 표본 영역을 디코딩합니다. NDPI 전체 픽셀 디코딩을 완료했다고 보고하지 않습니다.
+- `tests/test_native_gui.py`, `tests/test_export_options.py`, `tests/test_audit_comparison_gui.py`, `tests/test_preserved.py`: 지원 항목, 설명 창, 파일명/ICC/MPP/CSV 조합, 원본 값의 화면 전용 표시, 기존 JPEG 유지 경로를 검증했습니다.
+- 최종 EXE의 `tests/test_release.py`, `tests/test_philips_release.py`: 기존 TIFF/JPEG/Deflate/JPEG 2000·취소·원본 무변경과 동봉 Philips 런타임/두 실제 샘플의 native 출력 재검사·미리보기를 통과했습니다. Philips 시험은 Python/Conda 없는 PATH와 가짜 홈에서 수행했습니다.
+- 최종 EXE 내부 GUI·워커·엔진의 바이트코드와 상수·시그니처를 현재 소스와 대조했습니다. ZIP CRC, 소스·EXE·런타임 SHA256, 설명 문서 일치를 확인했습니다. ZIP 내부 최장 경로는 95자입니다.
+
+실제 새 Windows 설치 PC/VM 또는 모든 제조사 전용 뷰어의 호환성을 시험한 것은 아닙니다. 조직 픽셀 속 식별자와 선택적으로 보존한 ICC/원본 파일명은 별도 검토 대상입니다.
+
+## 1.9.1 이전 검증 기록
+
+GUI 저장 방식을 원본 형식 유지 / 원본 압축 유지 TIFF / 무손실 TIFF 세 가지로 변경했습니다. 형식·TIFF 헤더를 사전 확인해 목록 전체에서 지원하지 않는 항목을 선택 불가로 표시하고 ⓘ에서 이유를 설명합니다. 원본 형식 유지는 현재 Philips만 지원하며 `.i2syntax`도 `.isyntax`로 저장합니다. 무손실 TIFF는 모든 입력에 JPEG 2000을 적용합니다. 자세한 내용은 `storage_modes.md`를 참고하세요.
+
+2026-09-11 최종 1.9.1 검증:
+- `tests/test_native_gui.py` 및 `--frozen`: 정확히 세 선택지, 실제 SVS/NDPI 헤더 사전 확인, Philips·TIFF·비압축 TIFF·혼합 목록의 선택 제한, 프로그램 코드로 비활성 항목 선택 시 차단, ⓘ 설명, 목록 초기화, CSV 전용 상태를 확인했습니다. 실제 워커의 Philips 원본 저장 / JPEG 유지 TIFF / JPEG 2000 무손실 TIFF를 실행하고 무손실 픽셀 일치를 검증했습니다. 혼합 목록의 전체 Philips 무손실 TIFF 변환은 실행하지 않았으며 옵션 전달과 선택 제한을 확인했습니다.
+- `tests/test_export_options.py`, `tests/test_philips_gui.py`, `tests/test_audit_comparison_gui.py`: CSV 조합, 파일명·MPP·ICC 설정, 정보 창, 익명화 전후 원본 값의 화면 전용 표시와 메모리 초기화를 통과했습니다.
+- `tests/test_release.py`: 최종 EXE의 검사, JPEG 유지, Deflate·JPEG 2000, ICC, CSV 전용, 취소, 원본 무변경 검증을 통과했습니다.
+- `tests/test_philips_release.py`: Python/Conda 경로 없는 PATH와 가짜 사용자 홈에서 동봉 런타임을 사용했습니다. 두 실제 샘플의 native 전체 내보내기, 전체 압축 블록 검증 결과, ICC 포함 표본 픽셀 일치, 출력 재검사·미리보기, CSV 전용, 잘못된 입력 처리를 통과했습니다.
+- offscreen으로 설정 화면과 사용 불가 항목을 렌더링해 확인했습니다. 최종 EXE 내부 GUI/워커/엔진의 문자열 상수를 현재 소스와 대조했습니다. ZIP CRC, 실행 파일 동일성, 원본 소스·동봉 SDK 런타임 해시, SHA256을 확인했습니다. ZIP 내부 최장 경로는 95자입니다.
+
+실제 새 Windows 설치 PC/VM에서 수행한 시험은 아닙니다. 외부 프로그램의 모든 뷰어 조합이나 모든 WSI 변형을 보장하지 않습니다. 영상 속 식별자와 선택적으로 보존한 ICC는 별도 검토 대상입니다.
+
+## 1.9.0 이전 검증 기록
 
 1.9.0은 Philips 고유 압축을 보존한 .isyntax 저장과 목적별 간단한 UI를 추가합니다. `tests/test_native_philips.py`에서 두 샘플의 전체 압축 블록, 웨이블릿 설정, XML 필드 허용 목록, 크기·해상도 단계, ICC 포함/제외, CSV, 취소, 이름 충돌, 원본 미변경을 검증했습니다. `tests/test_native_gui.py`에서 Philips와 TIFF 혼합 작업의 기본 설정 전달 및 올바른 확장자를 확인했습니다. 저장 코덱은 hulsken2/Q2를 유지합니다. 전체 압축 블록은 대조하지만 디코딩은 모든 레벨의 표본 영역만 검사합니다. ICC 포함 시 표본 표시 픽셀도 일치합니다. 용량·실행 시간과 범위는 `native_philips.md`를 참고하세요.
+
+최종 1.9.0 EXE에서도 `tests/test_philips_release.py`로 두 샘플 전체 native 내보내기와 생성 파일 재검사·미리보기를 검증했습니다. 기존 Python/Conda 경로를 제거한 PATH와 가짜 사용자 홈에서 동봉 런타임을 사용했습니다. `tests/test_native_gui.py --frozen`은 실제 EXE의 Philips/TIFF 혼합 작업을 통과했습니다. `tests/test_release.py`의 기존 TIFF/JPEG 2000·ICC·CSV·취소 회귀 검증도 통과했습니다. 실제 새 Windows 설치 PC/VM에서 실행한 시험은 아닙니다.
+
+`tests/test_native_header.py`는 허용되지 않은 환자 필드, 예기치 않은 ICC 값, 양자화 설정 불일치 및 XML 엔티티 선언을 각각 해당 사유로 거부함을 확인했습니다.
 
 아래는 이전 TIFF 릴리즈 검증 기록입니다.
 

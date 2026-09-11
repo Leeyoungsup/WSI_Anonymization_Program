@@ -66,17 +66,17 @@ with tempfile.TemporaryDirectory(dir=ROOT / "artifacts") as folder:
     w.rename_output.setChecked(False)
     w.export_csv.setChecked(False)
     w.preserve_mpp.setChecked(False)
-    w.compression.setCurrentIndex(1)
+    w.compression.setCurrentIndex(w.compression.findData("jpeg2000"))
     w.copy_button.click()
     wait(app,w)
     for result in w.results.values():
         assert Path(result["file"]).name in ("patient_a.tiff", "patient_b.tiff")
         assert result["csv_path"] is None
-        assert result["report"]["compression"]=="deflate-lossless"
+        assert result["report"]["compression"]=="jpeg2000-lossless"
         assert result["report"]["mpp"] is None
         assert not list(Path(result["directory"]).glob("*.csv"))
     w.export_csv.setChecked(True)
-    w.compression.setCurrentIndex(0)
+    w.compression.setCurrentIndex(w.compression.findData("preserve"))
     w.copy_button.click()
     wait(app,w)
     with Path(w.results[1]["csv_path"]).open(encoding="utf-8-sig",newline="") as f:
