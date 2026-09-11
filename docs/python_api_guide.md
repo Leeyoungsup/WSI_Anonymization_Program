@@ -1,3 +1,5 @@
+1.9.0 Philips 원본 유지: `anonymize_wsi(input_path, output_dir, compression="philips")`로 .isyntax를 저장합니다. 고유 압축 블록을 그대로 보존하며 추가 손실이 없습니다. SDK 표시 색상은 ICC 포함 여부에 따라 달라집니다. TIFF 출력 옵션과 별도이며 자세한 내용은 [원본 유지 가이드](native_philips.md)를 참고하세요. `pyramid=True`, `preserve_mpp=True`, `redactions=()`가 필요합니다. CSV 전용은 기존과 같이 `export_image=False`입니다.
+
 JPEG 2000 lossless (v1.8.2)
 -------------------------
 API: anonymize_wsi(input_path, output_dir, compression="jpeg2000", pyramid=True)

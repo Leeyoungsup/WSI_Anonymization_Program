@@ -109,7 +109,7 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MeDIAuto Anonymization · 1.8.2 · 내부 연구용")
+        self.setWindowTitle("MeDIAuto Anonymization · 1.9.0 · 내부 연구용")
         self.setWindowIcon(QIcon(str(ASSET_ROOT / "icon.png")))
         self.resize(1240, 900)
         self.setMinimumSize(1050, 760)
@@ -137,7 +137,7 @@ class Window(QMainWindow):
         self.brand.setAccessibleName("MeDIAuto Anonymization")
         header.addWidget(self.brand)
         header.addStretch()
-        subtitle = QLabel("WSI 익명화 및 내보내기\nSVS · NDPI · Philips iSyntax / i2syntax → TIFF + CSV")
+        subtitle = QLabel("WSI 익명화 및 내보내기\nSVS · NDPI · Philips 지원 · 원본 유지 / TIFF 변환")
         subtitle.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         subtitle.setObjectName("subtitle")
         header.addWidget(subtitle)
@@ -219,12 +219,18 @@ class Window(QMainWindow):
         options.setContentsMargins(18, 10, 18, 14)
         options.setVerticalSpacing(14)
         self.info_buttons = {}
+        self.advanced_box = QGroupBox()
+        advanced = QGridLayout(self.advanced_box)
+        advanced.setContentsMargins(0, 4, 0, 4)
+        advanced.setVerticalSpacing(12)
+        self.advanced_box.hide()
 
         def option(widget, key, title, explanation, row, column):
-            order = {"image": 0, "csv": 1, "structure": 2, "compression": 3,
-                     "rename": 5, "filename": 6, "mpp": 7, "icc": 8, "privacy": 9}
+            order = {"image": 0, "csv": 1, "preset": 2,
+                     "rename": 4, "filename": 5, "privacy": 8}
+            advanced_order = {"structure": 0, "compression": 1, "mpp": 2, "icc": 3}
             line = QHBoxLayout()
-            if key in ("structure", "compression"):
+            if key in ("structure", "compression", "preset"):
                 line.addWidget(QLabel(title))
             line.addWidget(widget)
             info = QToolButton()
@@ -236,18 +242,21 @@ class Window(QMainWindow):
             self.info_buttons[key] = info
             line.addWidget(info)
             line.addStretch()
-            options.addLayout(line, order[key], 0)
+            if key in advanced_order:
+                advanced.addLayout(line, advanced_order[key], 0)
+            else:
+                options.addLayout(line, order[key], 0)
 
-        self.export_image = QCheckBox("TIFF 영상")
-        self.export_csv = QCheckBox("슬라이드 정보 CSV")
+        self.export_image = QCheckBox("영상 파일 저장")
+        self.export_csv = QCheckBox("처리 내역과 슬라이드 정보 저장 (CSV)")
         self.include_filename = QCheckBox("CSV에 원본 파일명 포함")
         self.rename_output = QCheckBox("출력 파일명을 익명 이름으로 변경")
         self.rename_output.setChecked(True)
-        self.preserve_mpp = QCheckBox("TIFF에 MPP 보존")
-        self.preserve_icc = QCheckBox("원본 ICC 포함 (별도 검토 필요)")
+        self.preserve_mpp = QCheckBox("실제 크기 정보 유지")
+        self.preserve_icc = QCheckBox("원본 색상 프로파일 유지 (별도 검토)")
         for control in (self.export_image, self.export_csv, self.include_filename, self.preserve_mpp):
             control.setChecked(True)
-        option(self.export_image, "image", "TIFF 영상", "조직 영상을 익명 파일명의 TIFF로 저장합니다. 기본값은 표준 피라미드 TIFF이며 라벨과 매크로는 포함하지 않습니다.\n\n해제하면 TIFF 파일을 만들지 않고 선택한 CSV만 저장합니다.", 0, 0)
+        option(self.export_image, "image", "영상 파일 저장", "원본 유지: Philips는 .isyntax, 호환 SVS/NDPI는 .tiff로 저장합니다. 조직 영상만 포함하며 원본의 라벨·매크로와 개인정보 메타데이터는 제외합니다.\n\nTIFF가 필요한 경우 저장 방식에서 화질 보존 또는 용량 줄이기를 선택하세요. 해제하면 선택한 CSV만 저장합니다.", 0, 0)
         option(self.export_csv, "csv", "슬라이드 정보 CSV", "MPP(픽셀의 실제 크기), 영상 크기, 배율, 입력 형식, 파일 크기와 처리 결과를 CSV에 기록합니다. 환자명·검체 ID·스캔 날짜 등 원본 개인정보 태그는 포함하지 않습니다.\n\nCSV만 선택하면 영상을 변환하거나 픽셀 검증하지 않습니다.", 0, 1)
         option(self.include_filename, "filename", "원본 파일명 포함", "CSV에 원본 파일명을 기록하여 결과와 대응시킵니다. 파일명 자체에 이름이나 환자 ID가 있으면 CSV에도 남습니다.\n\n해제하면 original_filename 열을 빈칸으로 저장합니다. TIFF 내부에는 원본 파일명을 기록하지 않습니다.", 1, 1)
         option(self.preserve_mpp, "mpp", "기술 정보와 MPP 보존", "Magnification: 원본 대물렌즈 배율입니다.\nPixel Size: 전체 영상의 가로 × 세로 픽셀 수입니다.\nMPP: 픽셀 하나의 실제 길이(µm/pixel, X/Y)입니다.\nPhysical Size: 픽셀 수 × MPP로 계산한 전체 영상 영역의 크기(mm)이며 조직만의 크기가 아닙니다.\n\n기술 정보는 숫자만 TIFF에 새로 기록합니다. 원본에 없는 배율·MPP는 추정하지 않습니다. 외부 뷰어의 배율 표시는 뷰어 지원에 따라 다릅니다.\n\nMPP 보존을 해제하면 TIFF의 MPP와 Physical Size를 생략합니다. CSV에는 원본 기술 정보를 기록합니다.", 1, 0)
@@ -259,22 +268,38 @@ class Window(QMainWindow):
         self.compression.addItem("형식별 자동 · Philips JPEG Q90 (손실)", "auto_jpeg")
         self.compression.addItem("JPEG 2000 무손실", "jpeg2000")
         self.compression.addItem("형식별 자동 · Philips JPEG 2000 무손실", "auto_jpeg2000")
+        self.compression.addItem("원본 유지 · Philips iSyntax / 그 외 JPEG 유지", "auto_original")
+        self.compression.addItem("Philips iSyntax 원본 압축 유지", "philips")
+        self.compression.setCurrentIndex(self.compression.findData("auto_original"))
+        self.storage_choice = QComboBox()
+        self.storage_choice.addItem("원본 유지 (권장)", "auto_original")
+        self.storage_choice.addItem("화질 보존 · TIFF로 저장", "auto_jpeg2000")
+        self.storage_choice.addItem("용량 줄이기 · TIFF로 저장", "auto_jpeg")
+        self.storage_choice.addItem("직접 설정", "custom")
+        option(self.storage_choice, "preset", "저장 방식", "원본 유지: 원본 조직 압축을 그대로 옮깁니다. Philips는 .isyntax로 저장하며 이 프로그램과 Philips 호환 도구로 읽을 수 있습니다. 일반 OpenSlide에서는 열 수 없습니다.\n\n화질 보존: Philips를 추가 압축 손실 없이 TIFF로 변환합니다. 용량과 시간이 늘어날 수 있습니다.\n\n용량 줄이기: Philips를 손실 압축 TIFF로 변환합니다. 추가 화질 손실이 있습니다.\n\n세 방식 모두 호환 SVS/NDPI의 원본 JPEG 압축은 유지합니다. 직접 설정은 세부 압축 방식을 선택할 때 사용합니다.", 0, 0)
         self.compression.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.compression.setMinimumContentsLength(18)
-        self.compression.setToolTip("JPEG 2000 무손실: 가역 웨이블릿 압축으로 읽은 RGB 픽셀을 보존합니다. Aperio 호환 TIFF로 저장하며 Philips 고유 압축 복사는 아닙니다.")
-        option(self.compression, "compression", "압축 방식", "원본 JPEG 압축 유지: 호환되는 SVS/NDPI/TIFF의 JPEG 데이터를 재사용합니다.\n\n무손실 Deflate: 읽은 RGB를 무손실 저장합니다. 파일 크기가 크게 늘 수 있습니다.\n\n형식별 자동: Philips iSyntax/i2syntax는 SDK 표시 영역의 8비트 RGB를 Deflate로 저장하고, 그 외 형식은 원본 JPEG 유지로 처리합니다. Philips 원시 내부 샘플을 그대로 복사하는 것은 아니며, SDK 표시 영역은 원시 영역보다 가장자리가 작을 수 있습니다. 확인되지 않는 배율은 생략합니다.\n\nJPEG 2000 무손실: 가역 웨이블릿 압축으로 읽은 RGB 픽셀을 보존합니다. Philips 추가 시 기본 선택되며, 그 외 호환 입력은 원본 JPEG를 유지합니다. Philips 고유 압축 복사가 아니고 속도·용량은 영상에 따라 다릅니다.\n\nJPEG 재압축: 품질 90, 4:2:0으로 저장합니다. 추가 화질 손실이 있으며 Philips 고유 압축 보존이 아닙니다.\n\n내부 연구용 배포본에는 SDK와 Python 3.7 런타임이 동봉됩니다. philips 폴더를 함께 유지하세요.", 2, 0)
-        option(QLabel("개인정보 태그 제거 · ICC 포함 시 별도 검토"), "privacy", "익명화 범위", "TIFF에서 원본 개인정보 태그, 라벨·매크로·원본 썸네일과 JPEG APP/COM 부가정보를 제외합니다. ICC는 기본 제외이며 원본 ICC 포함을 선택하면 프로파일 내부 정보도 함께 복사되어 별도 검토가 필요합니다.\n\n조직 영상에 직접 찍힌 이름이나 식별자는 자동으로 지워지지 않습니다. 아래 검토 확인은 사용자의 확인 기록이며 자동 익명화 인증이 아닙니다.", 2, 1)
+        self.compression.setToolTip("원본 유지는 Philips 고유 압축을 .isyntax로 저장합니다. 나머지는 TIFF 변환 옵션입니다. 옆의 설명 버튼에서 차이를 확인하세요.")
+        option(self.compression, "compression", "압축 방식", "원본 JPEG 압축 유지: 호환되는 SVS/NDPI/TIFF의 JPEG 데이터를 재사용합니다.\n\n무손실 Deflate: 읽은 RGB를 무손실 저장합니다. 파일 크기가 크게 늘 수 있습니다.\n\n형식별 자동: Philips iSyntax/i2syntax는 SDK 표시 영역의 8비트 RGB를 Deflate로 저장하고, 그 외 형식은 원본 JPEG 유지로 처리합니다. Philips 원시 내부 샘플을 그대로 복사하는 것은 아니며, SDK 표시 영역은 원시 영역보다 가장자리가 작을 수 있습니다. 확인되지 않는 배율은 생략합니다.\n\nJPEG 2000 무손실: 가역 웨이블릿 압축으로 읽은 RGB 픽셀을 보존합니다. 화질 보존을 선택하면 Philips에 적용하며, 그 외 호환 입력은 원본 JPEG를 유지합니다. Philips 고유 압축 복사가 아니고 속도·용량은 영상에 따라 다릅니다.\n\nJPEG 재압축: 품질 90, 4:2:0으로 저장합니다. 추가 화질 손실이 있으며 Philips 고유 압축 보존이 아닙니다.\n\n내부 연구용 배포본에는 SDK와 Python 3.7 런타임이 동봉됩니다. philips 폴더를 함께 유지하세요.", 2, 0)
+        option(QLabel("개인정보 항목 제외 · 영상 속 글자는 직접 확인"), "privacy", "익명화 범위", "원본 메타데이터와 라벨·매크로 이미지를 제외하고 새 파일을 만듭니다. Philips 원본 유지에서는 조직 압축 블록만 복사하고 기술 정보만 새로 기록합니다.\n\n원본 색상 프로파일을 유지하면 프로파일 내부 설명도 복사되므로 별도 검토가 필요합니다. 조직 영상에 직접 찍힌 이름이나 식별자는 자동으로 지워지지 않습니다.", 2, 1)
         self.structure = QComboBox()
-        self.structure.addItem("표준 피라미드 TIFF", True)
-        self.structure.addItem("단일 해상도 TIFF", False)
+        self.structure.addItem("확대·축소 보기 지원", True)
+        self.structure.addItem("최대 해상도만 저장", False)
         option(self.structure, "structure", "출력 구조", "표준 피라미드 TIFF: 최대 해상도와 조직 축소 레벨을 함께 저장합니다. OpenSlide의 get_thumbnail()과 확대·축소 보기에 사용할 수 있습니다.\n\n단일 해상도 TIFF: 최대 해상도만 저장합니다. 큰 영상의 get_thumbnail()은 많은 메모리가 필요할 수 있습니다.\n\n두 구조 모두 개인정보 메타데이터 제거를 적용합니다. 영상에 직접 찍힌 식별자는 별도 검토가 필요합니다.", 3, 0)
         self.options_hint = QLabel()
-        option(self.rename_output, "rename", "출력 파일명 변경", "체크: anonymous_<임의 ID>.tiff로 저장합니다.\n해제: 원본 이름을 유지하고 확장자만 .tiff로 바꿉니다. 같은 이름이 있으면 _2, _3 등을 붙이며 기존 파일을 덮어쓰지 않습니다.\n\n원본 이름에 환자명·ID가 있으면 해제 시 결과 파일명에도 남습니다. TIFF 내부 메타데이터 제거는 그대로 적용합니다. CSV의 원본 파일명 포함 옵션과는 별개입니다.", 3, 1)
+        option(self.rename_output, "rename", "출력 파일명 변경", "체크: anonymous_<임의 ID> 이름으로 저장합니다.\n해제: 원본 이름을 유지합니다. 저장 방식에 따라 .isyntax 또는 .tiff 확장자를 사용합니다. 같은 이름이 있으면 _2, _3 등을 붙이며 기존 파일을 덮어쓰지 않습니다.\n\n원본 이름에 환자명·ID가 있으면 해제 시 결과 파일명에도 남습니다. TIFF 내부 메타데이터 제거는 그대로 적용합니다. CSV의 원본 파일명 포함 옵션과는 별개입니다.", 3, 1)
         self.options_hint.setWordWrap(True)
-        option(self.preserve_icc, "icc", "ICC 색상 프로파일", "체크하면 원본 조직 영상의 ICC를 TIFF 기본 페이지에 그대로 저장합니다. OpenSlide color_profile로 읽을 수 있습니다. ICC 옵션은 프로파일 복사만 제어하며, 영상 압축은 선택한 압축 방식을 따릅니다.\n\nICC 내부 설명·제조사 정보 등도 그대로 복사되므로 개인정보가 없는지 별도 검토가 필요합니다. 결과는 ICC 검토 필요로 표시합니다. 원본에 ICC가 없으면 추가하지 않습니다. 기본값은 제외입니다.", 4, 0)
+        option(self.preserve_icc, "icc", "ICC 색상 프로파일", "체크하면 원본 조직 영상의 ICC를 TIFF 기본 페이지에 그대로 저장합니다. OpenSlide color_profile로 읽을 수 있습니다. Philips 원본 유지에서도 원본 색상 프로파일을 복사합니다. 제외하면 압축 블록은 같아도 표시 색상이 달라질 수 있습니다. 이 옵션은 프로파일 복사만 제어합니다.\n\nICC 내부 설명·제조사 정보 등도 그대로 복사되므로 개인정보가 없는지 별도 검토가 필요합니다. 결과는 ICC 검토 필요로 표시합니다. 원본에 ICC가 없으면 추가하지 않습니다. 기본값은 제외입니다.", 4, 0)
         self.options_hint.setObjectName("hint")
-        options.addWidget(self.options_hint, 4, 0)
-        options.setRowStretch(10, 1)
+        options.addWidget(self.options_hint, 3, 0)
+        self.advanced_toggle = QToolButton()
+        self.advanced_toggle.setText("세부 설정 보기")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.toggled.connect(self.advanced_box.setVisible)
+        self.advanced_toggle.toggled.connect(lambda checked: self.advanced_toggle.setText("세부 설정 접기" if checked else "세부 설정 보기"))
+        options.addWidget(self.advanced_toggle, 6, 0)
+        options.addWidget(self.advanced_box, 7, 0)
+        options.setRowStretch(9, 1)
         settings_scroll = QScrollArea()
         settings_scroll.setWidgetResizable(True)
         settings_scroll.setWidget(self.options_box)
@@ -356,8 +381,27 @@ class Window(QMainWindow):
                          self.output_button, self.output, self.reviewed, self.options_box]
         self.export_image.toggled.connect(self.update_options)
         self.export_csv.toggled.connect(self.update_options)
+        self.preserve_icc.toggled.connect(self.update_options)
         self.compression.currentIndexChanged.connect(self.update_options)
+        self.compression.currentIndexChanged.connect(self.sync_storage_choice)
+        self.storage_choice.currentIndexChanged.connect(self.select_storage_choice)
         self.update_options()
+
+    def select_storage_choice(self):
+        mode = self.storage_choice.currentData()
+        if mode == "custom":
+            self.advanced_toggle.setChecked(True)
+        else:
+            self.compression.setCurrentIndex(self.compression.findData(mode))
+
+    def sync_storage_choice(self):
+        mode = self.compression.currentData()
+        index = self.storage_choice.findData(mode)
+        self.storage_choice.blockSignals(True)
+        self.storage_choice.setCurrentIndex(index if index >= 0 else self.storage_choice.findData("custom"))
+        self.storage_choice.blockSignals(False)
+        if index < 0:
+            self.advanced_toggle.setChecked(True)
 
     def update_options(self):
         images, csv = self.export_image.isChecked(), self.export_csv.isChecked()
@@ -366,23 +410,35 @@ class Window(QMainWindow):
         self.preserve_icc.setEnabled(images)
         self.rename_output.setEnabled(images)
         self.compression.setEnabled(images)
+        self.storage_choice.setEnabled(images)
         self.structure.setEnabled(images)
+        native = self.compression.currentData() == "philips" or (
+            self.compression.currentData() == "auto_original" and any(p.suffix.lower() in {".isyntax", ".i2syntax"} for p in self.paths))
+        if images and native:
+            self.structure.setCurrentIndex(self.structure.findData(True))
+            self.structure.setEnabled(False)
+            self.preserve_mpp.setChecked(True)
+            self.preserve_mpp.setEnabled(False)
         self.copy_button.setEnabled(self.process is None and (images or csv))
         descriptions = {
+            "auto_original": "Philips는 .isyntax, 호환 SVS/NDPI는 .tiff로 저장합니다. 원본 조직 압축을 유지하여 추가 화질 손실을 피합니다.",
+            "philips": "Philips 원본 압축과 확대·축소 정보를 유지하여 .isyntax로 저장합니다. TIFF가 필요한 경우 위에서 저장 방식을 바꾸세요.",
             "jpeg2000": "모든 입력: JPEG 2000 무손실 피라미드 TIFF. 읽은 RGB 픽셀을 보존합니다. Philips 고유 압축 복사는 아니며 처리 시간은 늘 수 있습니다.",
-            "auto_jpeg2000": "Philips: JPEG 2000 무손실 · 그 외 호환 입력: 원본 JPEG 유지. SDK 표시용 8비트 RGB를 보존하며 원시 내부 데이터 보존은 아닙니다.",
+            "auto_jpeg2000": "Philips를 추가 압축 손실 없이 TIFF로 변환합니다. 원본보다 용량이 커지고 시간이 오래 걸릴 수 있습니다.",
             "preserve": "호환 SVS/NDPI/TIFF: 원본 JPEG 유지. Philips 영상 내보내기는 형식별 자동을 선택하세요.",
             "lossless": "모든 입력: RGB를 Deflate로 저장. 추가 압축 손실이 없지만 용량이 커질 수 있습니다.",
             "jpeg": "모든 입력: JPEG 품질 90으로 재압축. 추가 화질 손실이 있습니다.",
             "auto": "Philips: 무손실 Deflate · 그 외 호환 입력: 원본 JPEG 유지. Philips 결과 용량이 커질 수 있습니다.",
-            "auto_jpeg": "Philips: JPEG 품질 90으로 재압축(손실) · 그 외 호환 입력: 원본 JPEG 유지. Philips 고유 압축 보존은 아닙니다.",
+            "auto_jpeg": "Philips를 작은 용량의 TIFF로 변환합니다. 추가 화질 손실이 있으며 원본과 같은 용량을 보장하지 않습니다.",
         }
         if not (images or csv):
-            hint = "TIFF 또는 CSV를 하나 이상 선택하세요."
+            hint = "영상 또는 처리 내역을 하나 이상 선택하세요."
         elif not images:
             hint = "CSV 정보만 저장합니다. 영상 변환·압축·익명화 검증은 수행하지 않습니다."
         else:
             hint = descriptions[self.compression.currentData()]
+            if native and not self.preserve_icc.isChecked():
+                hint += "\n색상 프로파일을 제외하면 보이는 색상이 달라질 수 있습니다. 세부 설정에서 유지할 수 있습니다."
         self.options_hint.setText(hint + "\n선택한 결과는 같은 날짜·시간 폴더에 저장됩니다.")
 
     def export_options(self):
@@ -426,8 +482,9 @@ class Window(QMainWindow):
         self.status.setText(f"{len(self.paths)}개 파일 · 전체 검사를 시작할 수 있습니다.")
         if any(p.suffix.lower() in {".isyntax", ".i2syntax"} for p in self.paths):
             if self.compression.currentData() == "preserve":
-                self.compression.setCurrentIndex(self.compression.findData("auto_jpeg2000"))
-            self.status.setText(f"{len(self.paths)}개 파일 · Philips는 SDK 표시 RGB를 저장합니다. 압축 설정을 확인하세요.")
+                self.compression.setCurrentIndex(self.compression.findData("auto_original"))
+            self.status.setText(f"{len(self.paths)}개 파일 · Philips는 원본 유지 시 .isyntax로 저장합니다.")
+        self.update_options()
         self.empty_state.setVisible(not self.paths)
         if self.paths and self.table.currentRow() < 0:
             self.table.selectRow(0)
@@ -526,8 +583,8 @@ class Window(QMainWindow):
                "run_id": self.run_id,
                "cancel_file": str(self.cancel_file)}
         job.update(self.export_options())
-        if job["compression"] in ("auto", "auto_jpeg", "auto_jpeg2000"):
-            philips_compression = {"auto": "lossless", "auto_jpeg": "jpeg", "auto_jpeg2000": "jpeg2000"}[job["compression"]]
+        if job["compression"] in ("auto", "auto_jpeg", "auto_jpeg2000", "auto_original"):
+            philips_compression = {"auto": "lossless", "auto_jpeg": "jpeg", "auto_jpeg2000": "jpeg2000", "auto_original": "philips"}[job["compression"]]
             job["compression"] = philips_compression if self.paths[row].suffix.lower() in {".isyntax", ".i2syntax"} else "preserve"
         if FROZEN:
             self.job_file.write_text(json.dumps(job) + "\n", encoding="utf-8")
@@ -584,8 +641,8 @@ class Window(QMainWindow):
             self.results[row] = data
             if event["action"] == "copy":
                 self.last_export_folder = Path(data["directory"])
-                state = ("TIFF 완료 · 영상 확인됨" if data["report"]["pixel_review_asserted_by_caller"]
-                         else "TIFF 완료 · 영상 검토 필요")
+                state = ("저장 완료 · 영상 확인됨" if data["report"]["pixel_review_asserted_by_caller"]
+                         else "저장 완료 · 영상 검토 필요")
                 if data["report"]["format"] == "csv-only":
                     state = "CSV 완료 · 영상 변환 없음"
             else:
@@ -695,17 +752,17 @@ class Window(QMainWindow):
                     f"기술 정보: {Path(data['csv_path']).name}"]))
                 return
             self.details.setPlainText("\n".join([
-                "형식: " + ("표준 피라미드 TIFF" if report.get("pyramid") else "단일 해상도 TIFF"), f"영상 크기: {report['level_dimensions'][0]}",
+                "형식: " + ("Philips iSyntax · 원본 압축 유지" if report["format"] == "philips-isyntax" else "표준 피라미드 TIFF" if report.get("pyramid") else "단일 해상도 TIFF"), f"영상 크기: {report['level_dimensions'][0]}",
                 f"영상 레벨 수: {len(report['level_dimensions'])}",
                 *technical_lines(report.get("technical_metadata", {})),
                 f"원본 압축 유지 레벨: {report.get('preserved_levels', 0)} · 추가 생성 레벨: {report.get('generated_levels', 0)}",
-                "출력 OpenSlide Vendor: aperio (호환 형식)",
+                "이 프로그램 또는 Philips 호환 도구로 열 수 있습니다." if report["format"] == "philips-isyntax" else "OpenSlide로 열 수 있는 TIFF입니다.",
                 *((["Philips SDK 표시 RGB · 원시 내부 샘플과 다릅니다.",
                     f"SDK 표시 영역 시작 좌표: {report.get('philips_display_origin')}"])
-                  if report.get("source_vendor") == "philips" and "philips_display_origin" in report else []),
+                  if report.get("source_vendor") == "philips" and report["format"] != "philips-isyntax" and "philips_display_origin" in report else []),
                 "원본 개인정보 태그·라벨·매크로 제외; ICC는 아래 상태 참조",
-                "압축: " + ({"jpeg2000-lossless": "JPEG 2000 무손실", "jpeg-preserved": "원본 JPEG 유지", "deflate-lossless": "무손실 Deflate", "jpeg-reencoded-q90": "JPEG 재압축 Q90 (손실)"}.get(report["compression"], report["compression"])),
-                f"전체 타일 검증: {report['verified_tiles']:,}개 통과",
+                "압축: " + ({"philips-native-preserved": "Philips 원본 압축 유지", "jpeg2000-lossless": "JPEG 2000 무손실", "jpeg-preserved": "원본 JPEG 유지", "deflate-lossless": "무손실 Deflate", "jpeg-reencoded-q90": "JPEG 재압축 Q90 (손실)"}.get(report["compression"], report["compression"])),
+                (f"전체 압축 블록 일치: {report['verified_tiles']:,}개 · 영상 읽기는 일부 영역 검사" if report["format"] == "philips-isyntax" else f"전체 타일 검증: {report['verified_tiles']:,}개 통과"),
                 "영상 개인정보 검토: " + ("사용자가 확인함" if report["pixel_review_asserted_by_caller"] else "추가 검토 필요"),
                 "", (f"ICC: 원본 포함 ({report.get('icc_profile_bytes', 0):,} bytes) · ICC 내부 정보 별도 검토 필요"
                        if report.get("icc_profile_copied") else "ICC: 미포함 (원본에 없거나 제외 선택)"),

@@ -1,3 +1,22 @@
+MeDIAuto Anonymization 1.9.0 — Windows x64 · 내부 연구용
+
+ZIP 전체를 풀고 WSI_Anonymization.exe를 실행하세요. 옆의 philips 폴더도 함께 유지하세요.
+Python/Conda/SDK를 따로 설치할 필요가 없습니다.
+
+저장 방식
+- 원본 유지 (권장): Philips는 고유 압축을 유지한 .isyntax, 호환 SVS/NDPI는 .tiff로 저장합니다.
+- 화질 보존 · TIFF로 저장: Philips를 추가 압축 손실 없이 변환합니다. 용량과 시간이 늘어날 수 있습니다.
+- 용량 줄이기 · TIFF로 저장: Philips를 추가 손실 압축합니다.
+압축 이름·출력 구조·크기 보정·색상 프로파일은 세부 설정에 있습니다.
+
+Philips 원본 유지 결과는 일반 OpenSlide에서 열리지 않습니다. 이 프로그램이나 Philips 호환 도구로 읽으세요.
+원본 조직 압축 블록은 그대로 보존하되 XML과 개인정보 메타데이터·라벨·매크로는 새 파일에 복사하지 않습니다.
+색상 프로파일은 기본 제외이며 제외 시 표시 색상이 달라질 수 있습니다. 유지 시 프로파일 내부 정보도 검토해야 합니다.
+영상 속 이름이나 식별자는 직접 확인해야 합니다. 전체 압축 블록을 비교하고 일부 영상 영역을 읽어 검증합니다.
+결과와 CSV는 날짜·시간 폴더에 저장합니다. 자세한 안내는 NATIVE_PHILIPS.md를 참고하세요.
+
+아래는 기존 TIFF 기능에 관한 1.8.2 참고 설명입니다. 현재 기본값은 위의 원본 유지입니다.
+
 JPEG 2000 lossless (v1.8.2)
 -------------------------
 API: anonymize_wsi(input_path, output_dir, compression="jpeg2000", pyramid=True)

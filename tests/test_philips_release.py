@@ -34,6 +34,17 @@ with tempfile.TemporaryDirectory(prefix="philips_release_") as directory:
     assert event["data"]["report"]["objective_power"] is None
     code, event = run("inspect", "20260514_084959.i2syntax")
     assert code == 0 and event["data"]["errors"] == [], event
+    for name in ("20260511_124345.i2syntax", "20260514_084959.i2syntax"):
+        code, event = run("copy", name, compression="philips", preserve_icc=True, include_filename=False)
+        assert code == 0, event
+        report = event["data"]["report"]
+        assert report["format"] == "philips-isyntax"
+        assert report["all_compressed_blocks_verified"] and not report["reencoded"]
+        assert report["native_validation"]["header_whitelist_verified"]
+        assert report["source_output_pixel_regions_verified"] >= 24
+        assert abs(report["size_bytes"]-(ROOT/"data"/name).stat().st_size) < 100000
+        code, event = run("inspect", report["output_path"])
+        assert code == 0 and not event["data"]["errors"] and event["preview"], event
     invalid = root / "invalid.i2syntax"
     invalid.write_bytes(b"invalid synthetic SDK input")
     code, event = run("copy", str(invalid), compression="lossless")

@@ -23,7 +23,7 @@ def main():
         path = Path(job["source"])
         if job["action"] == "copy":
             def progress(event):
-                stage = {"write": "TIFF 저장", "verify": "전체 타일 검증", "pyramid": "피라미드 구성·검증", "finalize": "최종 확인"}[event["stage"]]
+                stage = {"write": "영상 저장", "verify": "저장 결과 확인", "pyramid": "확대·축소 영상 준비", "finalize": "최종 확인"}[event["stage"]]
                 emit("progress", message=f"{stage} · {event['percent']}%", percent=event["percent"])
             result = create_anonymized_tiff(
                 path, Path(job["output"]), run_id=job.get("run_id"), pixels_reviewed=job.get("pixels_reviewed", False),

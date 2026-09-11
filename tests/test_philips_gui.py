@@ -15,7 +15,9 @@ window = Window()
 with tempfile.TemporaryDirectory(dir=ROOT / "artifacts") as directory:
     window.add_paths(sorted((ROOT / "data").glob("*.i2syntax")))
     assert len(window.paths) == 2
-    assert window.compression.currentData() == "auto_jpeg2000"
+    assert window.compression.currentData() == "auto_original"
+    assert window.storage_choice.currentData() == "auto_original"
+    assert not window.advanced_toggle.isChecked()
     window.output.setText(directory)
     window.export_image.setChecked(False)
     window.include_filename.setChecked(False)

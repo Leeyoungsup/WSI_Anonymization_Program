@@ -1,3 +1,5 @@
+현재 1.9.0은 Philips 고유 압축을 유지하여 .isyntax로 내보냅니다. SDK 원본 블록 복사, 메타데이터 재작성, 검증과 사용법은 [원본 유지 가이드](native_philips.md)를 참고하세요. GUI 기본값은 원본 유지이며 아래 1.8.2 설명은 TIFF 변환 옵션에 해당합니다.
+
 JPEG 2000 lossless (v1.8.2)
 -------------------------
 API: anonymize_wsi(input_path, output_dir, compression="jpeg2000", pyramid=True)

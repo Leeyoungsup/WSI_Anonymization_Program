@@ -112,7 +112,7 @@ class PhilipsSlide:
             self.close()
             raise
 
-    def _request(self, message):
+    def _request(self, message, progress=None):
         import time
         try:
             self._process.stdin.write(json.dumps(message, ensure_ascii=True) + "\n")
@@ -135,6 +135,10 @@ class PhilipsSlide:
                 response = json.loads(line)
             except ValueError:
                 continue  # Discard native diagnostic text, never persist it.
+            if response.get("event") == "native_progress" and progress is not None:
+                progress(response["stage"], response["completed"], response["total"])
+                deadline = time.monotonic() + 120
+                continue
             if not response.get("ok"):
                 raise ValueError("Philips SDK could not read this file/region. The file may be damaged or unsupported by SDK 2.0.")
             return response.get("data", {})
@@ -852,6 +856,107 @@ def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, de
     return dimensions, verified, preserved if compression == "preserve" else 0, len(dimensions) - preserved
 
 
+def _export_philips_native(source, base, run_id, export_csv, include_filename,
+                           rename_output, reviewed, preserve_icc, workers, progress, cancelled):
+    """Publish a rebuilt iSyntax only after native block and metadata verification."""
+    temporary = None
+    def emit(stage, completed, total):
+        if cancelled and cancelled():
+            raise ExportCancelled("Export cancelled")
+        percent = (0 if stage == "write" else 60) + (60 if stage == "write" else 39) * completed / max(1, total)
+        if progress:
+            progress({"stage": stage, "completed": completed, "total": total, "percent": percent})
+    try:
+        emit("write", 0, 1)
+        before = source.stat()
+        with PhilipsSlide(source, cancelled) as slide:
+            icc = slide.icc if preserve_icc else None
+            if icc and (len(icc) > 64 * 1024**2 or icc[16:20] != b"RGB "):
+                raise ValueError("Only bounded RGB ICC profiles can be preserved")
+            folder = _run_folder(base, run_id)
+            if shutil.disk_usage(folder).free < before.st_size + 64 * 1024**2:
+                raise OSError("Not enough space for native Philips export")
+            fd, name = tempfile.mkstemp(prefix=".wsi_", suffix=".partial.isyntax", dir=folder)
+            os.close(fd)
+            temporary = Path(name)
+            native = slide._request({"command": "export_native", "path": str(temporary),
+                "preserve_icc": preserve_icc, "workers": workers}, progress=emit)
+            after = source.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise ValueError("Input changed during native export")
+            emit("verify", 1, 1)
+            mpp = [_numeric_property(slide, "openslide.mpp-x"), _numeric_property(slide, "openslide.mpp-y")]
+            technical = _technical_metadata(slide.dimensions, mpp, None, "philips")
+            technical.update(source_representation="Philips native compressed tissue blocks",
+                             source_origin_x_px=slide.display_origin[0], source_origin_y_px=slide.display_origin[1])
+            audit = _removal_audit(_inventory(source, slide), _inventory(temporary),
+                rename_output=rename_output, include_filename=include_filename,
+                export_csv=export_csv, icc=icc, reviewed=reviewed)
+            audit["scope"] = "New iSyntax XML field whitelist; original tissue blocks preserved; source XML excluded"
+            audit["entries"] = [e for e in audit["entries"] if e["item"] != "jpeg_app_com" and "tag_code" not in e]
+            audit["entries"].append({"item": "icc", "status": "retained" if icc else "excluded_by_policy",
+                "before": "present" if slide.icc else "absent", "after": "present" if icc else "absent"})
+            for entry in audit["entries"]:
+                if entry["item"] == "filename" and not rename_output:
+                    entry["after"] = "source_stem_isyntax"
+            audit["entries"].append({"item": "philips_metadata", "status": "rewritten",
+                "before": "not_assessed", "after": "technical_metadata"})
+            status = ("icc_review_required_" if icc else "metadata_clean_") + (
+                "pixels_reviewed" if reviewed else "pixel_review_required")
+            stem = "anonymous_" + uuid.uuid4().hex if rename_output else source.stem
+            target = folder / (stem + ".isyntax")
+            suffix = 1
+            while True:
+                try:
+                    os.rename(temporary, target)  # Windows: atomic and refuses overwrite.
+                    break
+                except FileExistsError:
+                    if rename_output:
+                        raise
+                    suffix += 1
+                    target = folder / (stem + "_" + str(suffix) + ".isyntax")
+            temporary = None
+            dimensions = native["level_dimensions"]
+            result = {
+                "output_path": str(target), "directory": str(folder), "format": "philips-isyntax",
+                "pyramid": True, "preserved_levels": len(dimensions), "generated_levels": 0,
+                "thumbnail_verified": False, "status": status, "metadata_clean": not bool(icc),
+                "icc_review_required": bool(icc), "pixel_review_asserted_by_caller": reviewed,
+                "redaction_count": 0, "level_dimensions": dimensions, "objective_power": None,
+                "rename_output": rename_output, "technical_metadata": technical, "anonymization_audit": audit,
+                "mpp": mpp, "compression": "philips-native-preserved", "additional_lossy_compression": False,
+                "jpeg_quality": None, "verified_tiles": native["verified_blocks"],
+                "all_output_tiles_verified": False, "all_compressed_blocks_verified": True,
+                "verification": "all-native-blocks-byte-identical-and-sampled-sdk-decode",
+                "source_output_pixel_regions_verified": native["sampled_regions_decoded"] if preserve_icc else 0,
+                "source_metadata_copied": False, "associated_images_copied": False,
+                "source_compressed_payload_copied": True, "jpeg_app_com_removed": False,
+                "reencoded": False, "base_image_reencoded": False, "icc_profile_copied": bool(icc),
+                "icc_profile_bytes": len(icc) if icc else 0, "source_vendor": "philips",
+                "representation": "Original Philips tissue coding; display appearance depends on retained ICC",
+                "philips_display_origin": slide.display_origin, "native_validation": native,
+                "size_bytes": target.stat().st_size,
+            }
+            row = {**technical, "original_filename": source.name if include_filename else "",
+                "output_filename": target.name, "source_format": source.suffix.lower(),
+                "mpp_x_um": mpp[0], "mpp_y_um": mpp[1], "source_level_count": slide.level_count,
+                "output_pages": len(dimensions), "source_size_bytes": before.st_size,
+                "output_size_bytes": result["size_bytes"], "compression": result["compression"],
+                "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"), "status": status,
+                "verified_tiles": native["verified_blocks"], "icc_profile_copied": bool(icc),
+                "icc_review_required": bool(icc), "pixel_review_asserted_by_caller": reviewed,
+                "anonymization_audit": json.dumps(audit, ensure_ascii=True, separators=(",", ":"))}
+            try:
+                result["csv_path"] = str(_record_csv(folder, row)) if export_csv else None
+            except Exception:
+                target.unlink()
+                raise
+            return result
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def anonymize_wsi(
     input_path: str | Path,
     output_dir: str | Path | None = None,
@@ -872,7 +977,16 @@ def anonymize_wsi(
     progress: Callable[[dict], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> dict:
-    """Export tissue as standard pyramidal TIFF (or explicitly single-image).
+    """Export tissue as TIFF, or native iSyntax with compression='philips'.
+
+    compression='philips': Philips iSyntax/i2syntax only. Rebuild a new .isyntax
+        container with whitelisted technical XML and original compressed WSI blocks.
+        No re-encoding, labels or macros. Requires pyramid=True, preserve_mpp=True
+        and no redactions. The original tissue levels/calibration are retained.
+        ICC is optional; excluding it can change SDK-rendered colors despite exact
+        native compressed-block preservation. OpenSlide cannot read native iSyntax;
+        use PhilipsSlide/the bundled SDK. All compressed blocks are compared, but
+        only sampled image regions are decoded (explicitly reported).
 
     output_dir: base directory; default is input's parent/output. A timestamp
         subdirectory contains anonymous_<uuid>.tiff and metadata.csv.
@@ -889,7 +1003,7 @@ def anonymize_wsi(
         It adds lossy compression; it does not preserve Philips iSyntax coding.
     pyramid: True by default. Reuse compatible source tissue levels in preserve
         mode, then generate 4x overviews down to <=512 pixels on the longest edge.
-        Additional overviews use JPEG quality 90 (or Deflate in lossless mode).
+        Additional TIFF overviews use the selected codec (JPEG Q90 in preserve mode).
         Base pixels are not re-encoded in preserve mode. False exports level 0 only.
     export_image, export_csv: choose TIFF, CSV, or both (default). At least one
         must be True. CSV-only mode reads technical metadata without conversion
@@ -904,7 +1018,7 @@ def anonymize_wsi(
     preserve_icc: copy the original RGB ICC profile including its metadata.
         Defaults to False. If copied, metadata_clean=False and the report/CSV
         explicitly require separate ICC metadata review. Pixels are not transformed.
-    tile_size: controls 'lossless' and 'jpeg'. workers: controls Deflate encoding.
+    tile_size: controls TIFF re-encoding. workers: controls parallel TIFF encoding.
         Preserve mode retains source coding geometry (apart from NDPI regrouping).
     progress: receives {stage, completed, total, percent}; no source identifiers.
     cancelled: cooperative callback evaluated between tiles; True aborts export.
@@ -944,8 +1058,15 @@ def anonymize_wsi(
         raise ValueError("workers must be between 1 and 16")
     if not isinstance(pixels_reviewed, bool):
         raise TypeError("pixels_reviewed must be a boolean")
-    if compression not in ("preserve", "lossless", "jpeg", "jpeg2000"):
-        raise ValueError("compression must be preserve, lossless, jpeg or jpeg2000")
+    if compression not in ("preserve", "lossless", "jpeg", "jpeg2000", "philips"):
+        raise ValueError("compression must be preserve, lossless, jpeg, jpeg2000 or philips")
+    if compression == "philips" and export_image:
+        if source.suffix.lower() not in PHILIPS_EXTENSIONS:
+            raise ValueError("Native Philips export requires iSyntax/i2syntax input")
+        if redactions or not pyramid or not preserve_mpp:
+            raise ValueError("Native Philips export preserves original pixels, levels and calibration; use TIFF for masks or altered geometry")
+        return _export_philips_native(source, base, run_id, export_csv, include_filename,
+            rename_output, pixels_reviewed, preserve_icc, workers, progress, cancelled)
     if compression == "preserve" and redactions:
         raise ValueError("Pixel redactions require compression=lossless; preserve mode never re-encodes")
     if source.suffix.lower() in PHILIPS_EXTENSIONS and compression == "preserve" and export_image:
@@ -1246,7 +1367,7 @@ def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input")
     parser.add_argument("output", nargs="?")
-    parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg", "jpeg2000"), default="preserve")
+    parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg", "jpeg2000", "philips"), default="preserve")
     parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
     parser.add_argument("--keep-filename", action="store_true", help="Keep source basename with .tiff extension")
     parser.add_argument("--preserve-icc", action="store_true", help="Copy original ICC; profile metadata requires separate review")
