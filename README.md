@@ -86,9 +86,36 @@ MPP는 표준 XResolution/YResolution 태그 및 기술 JSON·CSV에 정확한 X
 
 기본 결과 폴더는 Windows 문서 폴더의 `WSI Exports`입니다. 선택한 폴더 아래 로컬 시각 `YYYYMMDD_HHMMSS_ffffff` 폴더를 만들고 TIFF·CSV를 저장합니다. 한 GUI 일괄 실행은 같은 폴더/CSV를 공유합니다.
 
-## 독립 함수
+## 개발 환경 복원
 
-**wsi_anonymizer.py** 하나를 다른 프로젝트로 복사할 수 있습니다. Python 3.10 이상과 다음 의존성이 필요합니다.
+현재 개발 PC의 두 Conda 환경을 `prefix` 경로 없이 각각 저장했습니다.
+
+| 파일 | 용도 |
+|---|---|
+| `environment-yslee.yml` | 메인 GUI, OpenSlide 변환, 테스트와 EXE 빌드 환경의 전체 스냅샷 |
+| `environment-philips-sdk-py37.yml` | Philips SDK 2.0 전용 Python 3.7 환경의 전체 스냅샷 |
+
+새 PC에서는 다음과 같이 복원합니다.
+
+```powershell
+conda env create -f environment-yslee.yml
+conda env create -f environment-philips-sdk-py37.yml
+```
+
+환경 파일은 현재 환경에 설치된 패키지를 모두 기록한 스냅샷이고, 프로젝트 실행에 필요한 최소 패키지는 `requirements.txt`와 `requirements-philips.txt`에 따로 관리합니다. Philips SDK 모듈을 공개 패키지 저장소에서 받을 수 없는 경우에는 제공받은 SDK의 `pixelengine`, `softwarerenderbackend`, `softwarerendercontext` 모듈을 `philips-sdk-py37` 환경에 다시 설치해야 합니다. 설치 후 소스 실행에 사용할 Python을 지정합니다.
+
+```powershell
+conda activate philips-sdk-py37
+$env:PHILIPS_PYTHON = (Get-Command python).Source
+conda activate yslee
+python app.py
+```
+
+환경 변수는 현재 PowerShell 창에서만 유지됩니다. 배포 ZIP은 자체 `philips` 런타임을 사용하므로 이 설정이 필요 없습니다.
+
+## Python 함수 사용법
+
+`wsi_anonymizer.py`의 공개 함수 `anonymize_wsi()`를 GUI 없이 직접 호출할 수 있습니다. 일반 SVS·NDPI·TIFF 처리에는 Python 3.10 이상과 다음 의존성이 필요합니다.
 
 ```shell
 pip install openslide-python "openslide-bin>=4.0.1.2" numpy tifffile imagecodecs Pillow
@@ -98,16 +125,86 @@ pip install openslide-python "openslide-bin>=4.0.1.2" numpy tifffile imagecodecs
 from wsi_anonymizer import anonymize_wsi
 
 result = anonymize_wsi(
-    "slide.ndpi", "output",
-    compression="preserve", pyramid=True,
-    export_image=True, export_csv=True,
-    include_filename=True, preserve_mpp=True,
+    input_path="slide.ndpi",
+    output_dir="output",
+    compression="preserve",
+    pyramid=True,
+    export_image=True,
+    export_csv=True,
+    rename_output=True,
+    include_filename=False,
+    preserve_mpp=True,
+    preserve_icc=True,
+    pixels_reviewed=False,
 )
-print(result["output_path"])
-print(result["csv_path"])
+
+print("영상:", result["output_path"])
+print("CSV:", result["csv_path"])
+print("처리 상태:", result["status"])
+print("압축:", result["compression"])
+print("검증 타일:", result["verified_tiles"])
 ```
 
-두 번째 인자는 TIFF 파일명이 아닌 출력 기본 폴더입니다. 여러 파일을 같은 폴더에 저장하려면 `datetime.now().strftime("%Y%m%d_%H%M%S_%f")`로 만든 하나의 `run_id`를 순차 호출에 전달합니다. 같은 폴더에 동시 쓰기는 지원하지 않습니다.
+`input_path`는 원본 WSI 파일이고 `output_dir`는 결과 파일명이 아닌 출력 기본 폴더입니다. 그 아래에 실행 시각 이름의 폴더를 만들고 영상과 `metadata.csv`를 저장합니다. 기존 결과와 원본 파일은 덮어쓰지 않습니다.
+
+주요 옵션은 다음과 같습니다.
+
+| 옵션 | 의미 |
+|---|---|
+| `compression="preserve"` | 호환되는 SVS·NDPI·TIFF의 원본 JPEG 코딩 데이터 유지 |
+| `compression="native"` | 지원되는 SVS·NDPI·Philips의 원본 파일 형식과 조직 압축 유지 |
+| `compression="lossless"` | OpenSlide 또는 Philips SDK 표시 RGB를 Deflate로 무손실 저장 |
+| `compression="jpeg2000"` | 표시 RGB를 가역 JPEG 2000으로 무손실 저장 |
+| `compression="jpeg"` | 표시 RGB를 JPEG 품질 90으로 손실 재압축 |
+| `rename_output=True` | 임의 UUID 출력 파일명 사용 |
+| `include_filename=False` | CSV에서 원본 파일명 제외. 외부 공유 시 권장 |
+| `preserve_icc=True` | 원본 RGB ICC 복사. ICC 내부 정보는 별도 검토 필요 |
+| `pixels_reviewed=True` | 호출자가 조직 영상 내부를 직접 검토했음을 기록 |
+
+원본 SVS·NDPI·Philips 형식을 유지하려면 다음과 같이 호출합니다.
+
+```python
+native = anonymize_wsi(
+    "slide.svs",
+    "output",
+    compression="native",
+    include_filename=False,
+    preserve_icc=True,
+)
+```
+
+Philips `.isyntax`·`.i2syntax` 입력도 호출 방법은 같습니다. 소스 실행에서는 위의 Python 3.7 SDK 환경 또는 동봉 `philips` 런타임이 필요합니다.
+
+```python
+philips = anonymize_wsi(
+    "slide.i2syntax",
+    "output",
+    compression="native",
+    include_filename=False,
+    preserve_icc=True,
+)
+```
+
+지원되지 않는 원본 압축 구조를 자동으로 다른 방식으로 바꾸지는 않습니다. 이 경우 원본 형식 유지가 필요하지 않다면 `compression="jpeg2000"` 또는 `compression="lossless"`를 명시합니다.
+
+여러 파일을 같은 실행 폴더와 CSV에 순차 저장하려면 같은 `run_id`를 전달합니다.
+
+```python
+from datetime import datetime
+from pathlib import Path
+from wsi_anonymizer import anonymize_wsi
+
+run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+for source in Path("data").glob("*.svs"):
+    anonymize_wsi(
+        source, "output",
+        run_id=run_id,
+        compression="native",
+        include_filename=False,
+    )
+```
+
+같은 `run_id` 폴더의 CSV에 여러 프로세스가 동시에 쓰는 방식은 지원하지 않습니다. 함수의 전체 인자, 취소·진행률 콜백과 반환값은 [Python API 사용 가이드](docs/python_api_guide.md)를 참고하세요.
 
 CSV만 선택하면 영상 변환·픽셀 검증 없이 기술 정보를 저장하며 `output_path=None`입니다. TIFF만 선택하면 `csv_path=None`입니다.
 
