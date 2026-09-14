@@ -12,6 +12,32 @@ SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도�
 
 ## Windows EXE
 
+### 실행 환경과 Philips SDK
+
+메인 GUI와 일반 WSI 처리는 현재 Python 3.10 이상용 코드와 최신 OpenSlide, PySide6, tifffile, imagecodecs를 사용합니다. Philips SDK 2.0의 Windows 모듈은 `python37.dll`에 직접 연결되어 있으므로 Philips 읽기만 격리된 Python 3.7 프로세스에서 실행합니다. 전체 프로그램을 Python 3.7로 내리면 메인 의존성을 모두 구버전으로 교체하고 GUI·TIFF·JPEG 2000·빌드 경로를 다시 검증해야 하므로 지원 구성으로 사용하지 않습니다.
+
+배포 ZIP에는 필요한 최소 Python 3.7 런타임과 Philips SDK를 `philips` 폴더에 포함합니다. 사용자는 Python이나 Conda 환경을 두 개 설치할 필요가 없습니다. `WSI_Anonymization.exe`와 같은 위치의 `philips` 폴더를 함께 유지하면 메인 프로그램이 필요한 때에만 해당 런타임을 호출합니다. 두 프로세스는 표준 입출력과 Windows 공유 메모리로 통신하며 네트워크 서비스를 열지 않습니다.
+
+소스에서 실행할 때 Philips 기능에는 다음 중 하나가 필요합니다.
+
+- 프로젝트 옆에 배포용 `philips/python.exe` 런타임을 배치합니다.
+- 별도로 설치한 Python 3.7 SDK 환경을 `PHILIPS_PYTHON`으로 지정합니다.
+
+일반 SVS·NDPI·TIFF 처리에는 Philips 런타임이 없어도 됩니다.
+
+### Git 저장소에 포함할 파일
+
+`philips_bridge/*.py`는 Philips SDK 호출, 픽셀 읽기, 원본 형식 저장과 검증을 구현하는 프로젝트 소스이므로 Git에 반드시 포함합니다. `app.py`, `wsi_anonymizer.py`, `wsi_app/`, `tools/`, `logo/`, `docs/`, 요구사항 파일과 PyInstaller spec도 소스 실행 또는 배포 빌드에 필요합니다.
+
+다음 항목은 생성물이나 대용량 자료이므로 일반 Git 저장소에서 제외해도 프로그램 소스에는 영향이 없습니다.
+
+- `data/`: 실제 WSI 샘플. 프로그램 실행에는 불필요하지만 실제 샘플 통합 테스트에는 필요합니다.
+- `artifacts/`, `output/`: 테스트 및 내보내기 결과입니다.
+- `build/`, `dist/`, `release/`: 다시 만들 수 있는 빌드·배포 결과입니다.
+- `philips_bridge.zip`: Philips 제공 SDK 원본입니다. 일반 실행에는 불필요하지만 `tools/build_philips_runtime.py`로 휴대용 Philips 런타임을 처음부터 재구성할 때 필요합니다. 현재 파일은 GitHub의 단일 파일 100MB 제한을 넘으므로 Git LFS 또는 접근 권한이 있는 별도 저장소에 보관하고, SDK 라이선스가 허용하는 범위에서만 공유합니다.
+
+배포 결과를 직접 전달할 때는 `WSI_Anonymization.exe`만 복사하지 말고 생성된 `philips` 폴더 전체를 함께 전달해야 Philips 파일을 처리할 수 있습니다.
+
 1.8.2: **JPEG 2000 무손실 피라미드 TIFF**를 추가했습니다. Philips 파일을 추가하면 `형식별 자동 · Philips JPEG 2000 무손실`이 기본 선택됩니다. 호환 SVS/NDPI는 원본 JPEG를 유지합니다. 함수에서는 `compression="jpeg2000"`을 사용하세요. SDK 표시용 RGB를 보존하며 Philips 고유 압축을 복사하는 것은 아닙니다. 압축 방식 아래 설명과 ⓘ 버튼에서 범위를 확인할 수 있습니다.
 
 1.8.2 내부 연구용: **Philips SDK와 독립 Python 3.7 런타임을 동봉**하여 다른 연구용 Windows PC에서 별도 설치 없이 실행합니다. 기존 Conda 환경을 복사한 배포본이 아닙니다. Philips에는 무손실 Deflate와 **JPEG Q90 재압축(손실)**을 선택할 수 있습니다. 형식별 자동 JPEG 옵션은 Philips만 재압축하고 호환 SVS/NDPI는 원본 JPEG를 유지합니다. [Philips 사용·압축·배포 가이드](docs/philips_support.md)를 참고하세요.
