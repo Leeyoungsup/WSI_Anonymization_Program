@@ -129,6 +129,23 @@ with tempfile.TemporaryDirectory(dir=ROOT/'artifacts') as folder:
     assert Path(result['output_path']).suffix == '.svs'
     assert sentinel not in Path(result['output_path']).read_bytes()
     assert result['all_output_tiles_verified'] is True
+    # Skipping exhaustive reads must retain metadata removal and sampled decoding.
+    from unittest.mock import patch
+    for item in (source, svs):
+        with patch('imagecodecs.jpeg_decode', side_effect=AssertionError('Exhaustive decoder was called')):
+            fast = anonymize_wsi(item, root/'fast', compression='native', native_full_verify=False)
+        assert fast['native_full_verify'] is False
+        assert not fast['all_compressed_blocks_verified'] and not fast['all_output_tiles_verified']
+        assert fast['verified_tiles'] == 0
+        assert fast['source_output_pixel_regions_verified'] > 0
+        assert fast['verification'] == 'metadata-structure-and-sampled-all-levels-decode'
+        assert sentinel not in Path(fast['output_path']).read_bytes()
+        with Path(fast['csv_path']).open(encoding='utf-8-sig', newline='') as stream:
+            row = next(csv.DictReader(stream))
+        assert row['all_compressed_blocks_verified'] == 'False'
+    # Non-native modes ignore the native-only switch.
+    standard = anonymize_wsi(svs, root/'standard', compression='preserve', native_full_verify=False)
+    assert standard['all_output_tiles_verified'] and standard['all_compressed_blocks_verified']
     assert not list(root.rglob('*.partial.*'))
 if dll:
     dll.close()

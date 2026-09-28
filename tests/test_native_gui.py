@@ -51,6 +51,9 @@ with tempfile.TemporaryDirectory(dir=ROOT/'artifacts') as directory:
     w.add_paths([ROOT/'data/20260511_124345.i2syntax'])
     assert enabled() == [True, False, True]
     assert w.storage_choice.currentData() == 'native'
+    assert w.native_full_verify.isEnabled() and w.native_full_verify.isChecked()
+    w.native_full_verify.setChecked(False)
+    assert w.export_options()['native_full_verify'] is False
     assert not w.advanced_toggle.isChecked()
     assert not w.structure.isEnabled() and not w.preserve_mpp.isEnabled()
     dialogs = []
@@ -66,9 +69,15 @@ with tempfile.TemporaryDirectory(dir=ROOT/'artifacts') as directory:
     w.include_filename.setChecked(False)
     run()
     assert w.results[0]['report']['format'] == 'philips-isyntax'
+    assert w.results[0]['report']['native_full_verify'] is False
+    assert not w.results[0]['report']['all_compressed_blocks_verified']
+    assert w.results[0]['report']['native_validation']['compressed_blocks_sha256'] is None
+    assert w.results[0]['report']['native_validation']['sampled_regions_decoded'] > 0
     w.add_paths([source])
     assert enabled() == [False, False, True]
     assert w.storage_choice.currentData() == 'jpeg2000'
+    assert not w.native_full_verify.isEnabled()
+    assert w.export_options()['native_full_verify'] is True
     assert w.export_options()['compression'] == 'jpeg2000'
     w.storage_choice.setCurrentIndex(0)
     assert w.storage_choice.currentData() == 'jpeg2000'

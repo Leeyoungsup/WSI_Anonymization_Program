@@ -38,7 +38,7 @@ def main():
                 def progress(stage, completed, total):
                     print(json.dumps({"event": "native_progress", "stage": stage,
                                       "completed": completed, "total": total}), flush=True)
-                data = export_native(slide, req["path"], req["preserve_icc"], req["workers"], progress)
+                data = export_native(slide, req["path"], req["preserve_icc"], req["workers"], progress, req.get("full_verify", True))
             elif command == "close":
                 if slide is not None:
                     slide.close()

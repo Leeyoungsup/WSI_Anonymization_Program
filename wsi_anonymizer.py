@@ -201,7 +201,7 @@ CSV_FIELDS = (
     "original_filename", "output_filename", "source_format", "mpp_x_um", "mpp_y_um",
     "width_px", "height_px", "objective_power", "source_level_count", "output_pages",
     "source_size_bytes", "output_size_bytes", "compression", "exported_at",
-    "status", "verified_tiles", "pixel_review_asserted_by_caller",
+    "status", "verified_tiles", "pixel_review_asserted_by_caller", "verification", "all_compressed_blocks_verified",
     "physical_width_mm", "physical_height_mm",
     "source_vendor", "icc_profile_copied", "icc_review_required",
     "anonymization_audit",
@@ -685,7 +685,7 @@ def _copy_ndpi_scan(source, output, plan, notify):
     return digest.digest(), starts
 
 
-def _write_ndpi_native(source, target, emit, icc=None):
+def _write_ndpi_native(source, target, emit, icc=None, full_verify=True):
     # OpenSlide's NDPI backend does not expose an ICC profile. Avoid falsely
     # claiming that an unverified profile was preserved for this native path.
     if icc:
@@ -745,6 +745,8 @@ def _write_ndpi_native(source, target, emit, icc=None):
                     check.filehandle.seek(tag.valueoffset)
                     if check.filehandle.read(len(data)) != data:
                         raise ValueError(f"Native NDPI technical field/index changed (tag {code})")
+            if not full_verify:
+                continue
             digest = hashlib.sha256()
             check.filehandle.seek(offset)
             remaining = size
@@ -758,10 +760,10 @@ def _write_ndpi_native(source, target, emit, icc=None):
             if digest.digest() != expected:
                 raise ValueError("Native NDPI JPEG data changed")
         emit("verify", 1, 1)
-    return verified, len(records)
+    return verified if full_verify else 0, len(records)
 
 
-def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, append=False, description=None, icc=None):
+def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, append=False, description=None, icc=None, full_verify=True):
     """Repackage JPEG coding data, never invoke an encoder.
 
     tifffile exposes NDPI restart segments as virtual MCU-row tiles. Group
@@ -882,6 +884,8 @@ def _preserve_jpeg(source, target, dimensions, mpp, emit, *, page_index=0, appen
         _validate_metadata(page, allowed, description, icc)
         if page.shape != (height, width, 3) or len(page.dataoffsets) != total or not page.is_tiled:
             raise ValueError("Output dimensions/tile count changed")
+        if not full_verify:
+            return 0
         for i, (offset, count) in enumerate(zip(page.dataoffsets, page.databytecounts)):
             emit("verify", i, total)
             output.filehandle.seek(offset)
@@ -1029,7 +1033,7 @@ def _append_overview(target, openslide, mpp, compression, notify):
     return (width, height), total
 
 
-def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, description=None, icc=None, *, generate=True):
+def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, description=None, icc=None, *, generate=True, full_verify=True):
     """Reuse only recognized tissue levels; never copy label/macro/thumbnail IFDs."""
     dimensions = [slide.dimensions]
     candidates = []
@@ -1065,7 +1069,7 @@ def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, de
                                                mpp[1] * dimensions[0][1] / shape[1])
         def progress(stage, completed, total):
             notify((0 if stage == "write" else 0.7) + (0.7 if stage == "write" else 0.3) * completed / max(total, 1))
-        verified += _preserve_jpeg(source, target, [shape], scaled_mpp, progress, page_index=index, append=True)
+        verified += _preserve_jpeg(source, target, [shape], scaled_mpp, progress, page_index=index, append=True, full_verify=full_verify)
         dimensions.append(shape)
         done += 1
     preserved = len(dimensions)
@@ -1088,7 +1092,7 @@ def _append_pyramid(source, target, slide, openslide, mpp, compression, emit, de
 
 
 def _export_philips_native(source, base, run_id, export_csv, include_filename,
-                           rename_output, reviewed, preserve_icc, workers, progress, cancelled):
+                           rename_output, reviewed, preserve_icc, workers, progress, cancelled, full_verify=True):
     """Publish a rebuilt iSyntax only after native block and metadata verification."""
     temporary = None
     def emit(stage, completed, total):
@@ -1111,7 +1115,7 @@ def _export_philips_native(source, base, run_id, export_csv, include_filename,
             os.close(fd)
             temporary = Path(name)
             native = slide._request({"command": "export_native", "path": str(temporary),
-                "preserve_icc": preserve_icc, "workers": workers}, progress=emit)
+                "preserve_icc": preserve_icc, "workers": workers, "full_verify": full_verify}, progress=emit)
             after = source.stat()
             if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise ValueError("Input changed during native export")
@@ -1157,8 +1161,9 @@ def _export_philips_native(source, base, run_id, export_csv, include_filename,
                 "rename_output": rename_output, "technical_metadata": technical, "anonymization_audit": audit,
                 "mpp": mpp, "compression": "philips-native-preserved", "additional_lossy_compression": False,
                 "jpeg_quality": None, "verified_tiles": native["verified_blocks"],
-                "all_output_tiles_verified": False, "all_compressed_blocks_verified": True,
-                "verification": "all-native-blocks-byte-identical-and-sampled-sdk-decode",
+                "all_output_tiles_verified": False, "all_compressed_blocks_verified": full_verify,
+                "native_full_verify": full_verify,
+                "verification": "all-native-blocks-byte-identical-and-sampled-sdk-decode" if full_verify else "metadata-structure-and-sampled-sdk-decode",
                 "source_output_pixel_regions_verified": native["sampled_regions_decoded"] if preserve_icc else 0,
                 "source_metadata_copied": False, "associated_images_copied": False,
                 "source_compressed_payload_copied": True, "jpeg_app_com_removed": False,
@@ -1175,6 +1180,7 @@ def _export_philips_native(source, base, run_id, export_csv, include_filename,
                 "output_size_bytes": result["size_bytes"], "compression": result["compression"],
                 "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"), "status": status,
                 "verified_tiles": native["verified_blocks"], "icc_profile_copied": bool(icc),
+                "verification": result["verification"], "all_compressed_blocks_verified": full_verify,
                 "icc_review_required": bool(icc), "pixel_review_asserted_by_caller": reviewed,
                 "anonymization_audit": json.dumps(audit, ensure_ascii=True, separators=(",", ":"))}
             try:
@@ -1203,12 +1209,17 @@ def anonymize_wsi(
     pixels_reviewed: bool = False,
     preserve_mpp: bool = True,
     preserve_icc: bool = True,
+    native_full_verify: bool = True,
     tile_size: int = 512,
     workers: int = 4,
     progress: Callable[[dict], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> dict:
     """Export tissue as TIFF, or retain a supported native WSI container.
+
+    native_full_verify=False skips exhaustive native payload readback/decoding.
+        Metadata/structure and sampled level checks remain mandatory. Applies
+        only to native/philips modes; defaults to True for backward compatibility.
 
     compression='native': supported baseline-JPEG SVS/NDPI or Philips iSyntax.
         SVS/NDPI retain their actual format, tissue levels and coding data;
@@ -1316,7 +1327,7 @@ def anonymize_wsi(
         if redactions or not pyramid or not preserve_mpp:
             raise ValueError("Native Philips export preserves original pixels, levels and calibration; use TIFF for masks or altered geometry")
         return _export_philips_native(source, base, run_id, export_csv, include_filename,
-            rename_output, pixels_reviewed, preserve_icc, workers, progress, cancelled)
+            rename_output, pixels_reviewed, preserve_icc, workers, progress, cancelled, native_full_verify)
     if compression == "preserve" and redactions:
         raise ValueError("Pixel redactions require compression=lossless; preserve mode never re-encodes")
     if source.suffix.lower() in PHILIPS_EXTENSIONS and compression == "preserve" and export_image:
@@ -1436,9 +1447,9 @@ def anonymize_wsi(
                     with tifffile.TiffFile(source) as tif:
                         if any(34675 in page.tags for page in tif.pages):
                             raise ValueError("Native NDPI ICC preservation is not supported by this reader")
-                verified, stored_pages = _write_ndpi_native(source, temporary, emit, icc)
+                verified, stored_pages = _write_ndpi_native(source, temporary, emit, icc, native_full_verify)
             elif compression in ("preserve", "native"):
-                verified = _preserve_jpeg(source, temporary, dimensions, mpp, emit, description=description, icc=icc)
+                verified = _preserve_jpeg(source, temporary, dimensions, mpp, emit, description=description, icc=icc, full_verify=native_full_verify if native else True)
             elif compression == "jpeg":
                 verified = _write_jpeg(slide, temporary, mpp, boxes, tile_size, emit, description, icc)
             else:
@@ -1518,7 +1529,7 @@ def anonymize_wsi(
             elif pyramid:
                 dimensions, extra_verified, preserved_levels, generated_levels = _append_pyramid(
                     source, temporary, slide, openslide, mpp, "preserve" if native else compression,
-                    emit, description, icc, generate=not native)
+                    emit, description, icc, generate=not native, full_verify=native_full_verify if native else True)
                 verified += extra_verified
             if native and dimensions != list(slide.level_dimensions):
                 raise ValueError("Native export could not preserve all original tissue levels")
@@ -1617,8 +1628,8 @@ def anonymize_wsi(
                 "compression": {"native": "jpeg-preserved", "preserve": "jpeg-preserved", "lossless": "deflate-lossless", "jpeg": "jpeg-reencoded-q90", "jpeg2000": "jpeg2000-lossless"}[compression],
                 "additional_lossy_compression": compression == "jpeg",
                 "jpeg_quality": 90 if compression == "jpeg" else None,
-                "all_output_tiles_verified": not native_ndpi, "verified_tiles": verified,
-                "all_compressed_blocks_verified": compression in ("preserve", "native"),
+                "all_output_tiles_verified": not native_ndpi and (not native or native_full_verify), "verified_tiles": verified,
+                "all_compressed_blocks_verified": compression in ("preserve", "native") and (not native or native_full_verify),
                 "verification": "compressed-sha256-and-all-tiles-decode" if compression in ("preserve", "jpeg") else
                                 ("base-pixels-sha256-and-pyramid-compressed-sha256" if pyramid else "all-decoded-pixels-sha256"),
                 "source_output_pixel_regions_verified": sampled_regions,
@@ -1634,7 +1645,10 @@ def anonymize_wsi(
             }
             if native:
                 result["native_format_preserved"] = True
+                result["native_full_verify"] = native_full_verify
                 result["verification"] = "all-native-jpeg-sha256-and-sampled-all-levels-decode" if native_ndpi else "compressed-sha256-and-all-tiles-decode"
+                if not native_full_verify:
+                    result["verification"] = "metadata-structure-and-sampled-all-levels-decode"
                 result["stored_tissue_pages"] = stored_pages if native_ndpi else len(dimensions)
             if isinstance(slide, PhilipsSlide):
                 result["philips_display_origin"] = slide.display_origin
@@ -1649,6 +1663,7 @@ def anonymize_wsi(
                 "source_size_bytes": stat_before.st_size, "output_size_bytes": result["size_bytes"],
                 "compression": result["compression"], "exported_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "status": result["status"], "verified_tiles": verified,
+                "verification": result["verification"], "all_compressed_blocks_verified": result["all_compressed_blocks_verified"],
                 "pixel_review_asserted_by_caller": pixels_reviewed,
                 "anonymization_audit": json.dumps(audit, ensure_ascii=True, separators=(",", ":")),
             }
@@ -1670,6 +1685,7 @@ def _main():
     parser.add_argument("input")
     parser.add_argument("output", nargs="?")
     parser.add_argument("--compression", choices=("preserve", "lossless", "jpeg", "jpeg2000", "philips", "native"), default="preserve")
+    parser.add_argument("--no-native-full-verify", action="store_true", help="Skip exhaustive native payload verification; retain structure and sampled image checks")
     parser.add_argument("--single-image", action="store_true", help="Disable pyramid output")
     parser.add_argument("--keep-filename", action="store_true", help="Keep source basename with .tiff extension")
     parser.add_argument("--preserve-icc", action=argparse.BooleanOptionalAction, default=True,
@@ -1688,7 +1704,7 @@ def _main():
     result = anonymize_wsi(args.input, args.output, redactions=args.redact,
                            pixels_reviewed=args.pixels_reviewed, compression=args.compression,
                            pyramid=not args.single_image, rename_output=not args.keep_filename,
-                           preserve_icc=args.preserve_icc, progress=show_progress)
+                           preserve_icc=args.preserve_icc, native_full_verify=not args.no_native_full_verify, progress=show_progress)
     print(json.dumps(result, ensure_ascii=True, indent=2))
 
 

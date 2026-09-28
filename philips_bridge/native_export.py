@@ -69,7 +69,7 @@ def validate_header(path, icc, source_path):
         raise ValueError('Native wavelet quantization parameters changed')
 
 
-def export_native(source, path, preserve_icc, workers, progress):
+def export_native(source, path, preserve_icc, workers, progress, full_verify=True):
     """No source XML/text or associated images are copied. Source stays read-only."""
     path = Path(path).resolve()
     if not path.name.isascii():
@@ -143,7 +143,7 @@ def export_native(source, path, preserve_icc, workers, progress):
                     raise ValueError('Native compression settings changed')
             other = np.empty_like(buffer)
             digest = hashlib.sha256()
-            for i, coordinate in enumerate(coordinates):
+            for i, coordinate in enumerate(coordinates if full_verify else []):
                 if i % 256 == 0:
                     progress('verify', i, total)
                 a = src.read_block(buffer, coordinate)
@@ -167,7 +167,7 @@ def export_native(source, path, preserve_icc, workers, progress):
                                     raise ValueError('Native displayed pixels changed with retained ICC')
                     decoded += 1
             progress('verify', total, total)
-            return {'verified_blocks': total, 'compressed_blocks_sha256': digest.hexdigest(),
+            return {'verified_blocks': total if full_verify else 0, 'compressed_blocks_sha256': digest.hexdigest() if full_verify else None,
                     'sampled_regions_decoded': decoded, 'display_pixels_compared': bool(preserve_icc),
                     'codec': src.compressor, 'quality_preset': src.quality_preset,
                     'header_whitelist_verified': True, 'level_dimensions': check.level_dimensions}

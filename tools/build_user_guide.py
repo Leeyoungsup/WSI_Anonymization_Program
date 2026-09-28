@@ -19,7 +19,7 @@ pdfmetrics.registerFont(TTFont('KoreanBold','C:/Windows/Fonts/malgunbd.ttf'))
 pdfmetrics.registerFontFamily('Korean',normal='Korean',bold='KoreanBold')
 PDF = OUT/'MeDIAuto_WSI_User_Guide_KO.pdf'
 c = canvas.Canvas(str(PDF), pagesize=landscape(A4))
-c.setTitle('MeDIAuto WSI 익명화 프로그램 사용자 가이드 - 1.10.1')
+c.setTitle('MeDIAuto WSI 익명화 프로그램 사용자 가이드 - 1.10.2')
 c.setAuthor('MeDIAuto / WSI Anonymization Program')
 W,H = landscape(A4)
 INK=HexColor('#17273D'); MUTED=HexColor('#607189'); PURPLE=HexColor('#6550D8')
@@ -42,7 +42,7 @@ def page(n,title,subtitle):
     text(subtitle,36,H-82,W-72,'small')
     c.setStrokeColor(HexColor('#D8DFEC')); c.line(36,34,W-36,34)
     c.setFillColor(MUTED); c.setFont('Korean',8)
-    c.drawString(36,20,'사용자 가이드 | 프로그램 1.10.1 | 2026.09.28 | 내부 연구용')
+    c.drawString(36,20,'사용자 가이드 | 프로그램 1.10.2 | 2026.09.28 | 내부 연구용')
     c.drawRightString(W-36,20,f'{n:02d} / 10')
 
 def shot(name,x,y,width,maxheight):
@@ -100,6 +100,7 @@ y=section('1  원본 형식 유지','호환 SVS는 .svs, NDPI는 .ndpi, Philips�
 y=section('2  TIFF 변환 · 원본 압축 유지','호환 JPEG 구조의 SVS·NDPI·TIFF에서 사용할 수 있습니다. Philips의 고유 압축에는 사용할 수 없습니다.',y)
 y=section('3  TIFF 변환 · 무손실 압축','읽은 RGB를 JPEG 2000 무손실 TIFF로 저장합니다. 원본 제조사 압축을 그대로 복사하는 방식과는 다릅니다.',y)
 y=section('비활성화된 옵션','목록 중 지원하지 않는 입력이 있으면 비활성화됩니다. 저장 방식 옆 i 버튼에서 이유와 제한을 확인하세요.',y)
+y=section('전체 데이터 검증 (기본 켜짐)','원본 유형 유지에서만 선택합니다. 시간이 오래 걸릴 수 있습니다. 해제하면 전체 압축 데이터 비교와 SVS 전체 타일 디코딩을 생략하며, 메타데이터·구조와 각 레벨 표본 검사는 유지합니다. 미검사 영역의 손상은 놓칠 수 있습니다.',y)
 shot('04_settings',448,478,355,430)
 c.showPage()
 
@@ -135,7 +136,7 @@ page(9,'08. 결과 파일과 검증 상태','“결과 폴더 열기”로 이�
 y=475
 y=section('저장되는 파일','선택한 출력 폴더 아래 실행 시각 폴더가 생성됩니다. 영상 저장과 CSV를 모두 선택하면 변환 영상과 metadata.csv가 저장됩니다.',y)
 y=section('실제 캡처 결과','Philips 샘플을 원본 형식으로 내보냈습니다. 46,164개 압축 블록의 일치가 확인되었고 ICC는 보존되었습니다. 영상 내부 개인정보는 검토 필요 상태입니다.',y)
-y=section('검증 범위','Philips·원본 NDPI는 전체 압축 데이터 검증과 일부 영상 영역 읽기를 수행합니다. 모든 영상 픽셀의 개인정보를 검사한 결과는 아닙니다.',y)
+y=section('검증 범위','전체 데이터 검증을 켜면 Philips·원본 NDPI는 전체 압축 데이터를 비교합니다. 해제하면 결과에 검증 생략을 표시합니다. 표본 영역 읽기는 유지하며, 영상 픽셀의 개인정보 검사는 아닙니다.',y)
 y=section('다른 프로그램에서 열기','TIFF 출력은 OpenSlide에서 읽을 수 있습니다. Philips .isyntax는 일반 OpenSlide로 열 수 없어 Philips 호환 도구가 필요합니다.',y)
 shot('08_result',448,478,355,430)
 c.showPage()
@@ -149,7 +150,7 @@ y=section('CSV만 저장한 경우','영상 변환과 익명화 제거 검증을
 y=475
 y=section('전달 전 확인','1. 영상 파일명과 CSV에 원본 식별자가 남았는지<br/>2. 라벨·매크로와 처리 내역을 확인했는지<br/>3. 조직 영상 속 문자·식별자를 직접 검토했는지<br/>4. ICC 보존 여부와 검토 결과를 확인했는지<br/>5. 기관의 제공·반출 절차를 확인했는지',y,448,355)
 y=section('추가 안내 문서','README.md: 설치와 함수 사용<br/>docs/storage_modes.md: 저장 방식<br/>docs/python_api_guide.md: API 전체 설명<br/>docs/native_philips.md: Philips 지원 범위',y,448,355)
-text('제작 근거: 현재 1.10.1 소스 GUI와 data 샘플의 실제 실행 화면. 화면의 원본 식별자·경로는 예시로 치환했습니다. 이 가이드는 기관 승인 프로토콜이나 익명화 인증서가 아닙니다.',448,y,355,'small')
+text('제작 근거: 현재 1.10.2 소스 GUI와 data 샘플의 실제 실행 화면. 화면의 원본 식별자·경로는 예시로 치환했습니다. 이 가이드는 기관 승인 프로토콜이나 익명화 인증서가 아닙니다.',448,y,355,'small')
 c.showPage()
 c.save()
 print(PDF)

@@ -1,5 +1,7 @@
 # Philips 원본 압축 유지 · 1.10.1
 
+1.10.2부터 **전체 데이터 검증 (시간이 오래 걸릴 수 있음)**을 해제하면 전체 압축 블록 재읽기·비교·SHA-256 계산을 생략합니다. 기본값은 켜짐이며 아래의 전체 블록 검증 설명은 켠 경우입니다. XML·구조·ICC 및 각 레벨 표본 영상 검사는 유지합니다. API는 `native_full_verify=False`이며, 생략한 경우 `verified_blocks=0`, `compressed_blocks_sha256=null`, `all_compressed_blocks_verified=false`로 기록합니다. 미검사 영역의 손상은 발견하지 못할 수 있습니다.
+
 Philips `.i2syntax` / `.isyntax`를 **새 `.isyntax` 파일**로 저장합니다. 원본의 조직 압축 블록을 그대로 옮기므로 재압축이나 추가 압축 손실이 없습니다. TIFF가 아니며 일반 OpenSlide로는 열 수 없습니다. 이 프로그램 또는 해당 iSyntax 버전을 지원하는 Philips 도구를 사용하세요.
 
 ## 간단한 사용법

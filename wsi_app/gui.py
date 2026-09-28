@@ -143,7 +143,7 @@ def technical_lines(data):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MeDIAuto Anonymization · 1.10.1 · 내부 연구용")
+        self.setWindowTitle("MeDIAuto Anonymization · 1.10.2 · 내부 연구용")
         self.setWindowIcon(QIcon(str(ASSET_ROOT / "icon.png")))
         self.resize(1240, 900)
         self.setMinimumSize(1050, 760)
@@ -261,7 +261,7 @@ class Window(QMainWindow):
 
         def option(widget, key, title, explanation, row, column):
             order = {"image": 0, "csv": 1, "preset": 2,
-                     "rename": 4, "filename": 5, "privacy": 8}
+                     "native_verify": 3, "rename": 4, "filename": 5, "privacy": 8}
             advanced_order = {"structure": 0, "compression": 1, "mpp": 2, "icc": 3}
             line = QHBoxLayout()
             if key in ("structure", "compression", "preset"):
@@ -300,6 +300,11 @@ class Window(QMainWindow):
             self.storage_choice.addItem(label, mode)
         self.storage_choice.setCurrentIndex(0)
         self.compression = self.storage_choice  # Existing job API uses compression.
+        self.native_full_verify = QCheckBox("전체 데이터 검증 (시간이 오래 걸릴 수 있음)")
+        self.native_full_verify.setChecked(True)
+        self.native_full_verify.setToolTip("원본 파일 유형 유지에서만 선택할 수 있습니다. 해제해도 메타데이터·구조 확인과 표본 영상 검증은 수행합니다.")
+        option(self.native_full_verify, "native_verify", "전체 데이터 검증",
+               "원본 파일 유형 유지에서만 적용하며 기본값은 켜짐입니다.\n\n켜짐: SVS는 모든 JPEG 타일의 해시와 디코딩을 검사하고, NDPI는 전체 압축 데이터의 해시, Philips는 전체 압축 블록 일치를 검사합니다. 시간이 오래 걸릴 수 있습니다.\n\n해제: 전체 데이터 재읽기·비교와 SVS 전체 타일 디코딩을 생략합니다. 메타데이터·파일 구조 확인과 각 레벨의 표본 영상 검증은 유지합니다. 검사하지 않은 영역의 손상은 발견하지 못할 수 있습니다. 개인정보 제거 범위는 같습니다.", 3, 0)
         option(self.storage_choice, "preset", "저장 방식", "", 0, 0)
         self.info_buttons["preset"].clicked.disconnect()
         self.info_buttons["preset"].clicked.connect(self.show_storage_info)
@@ -316,7 +321,7 @@ class Window(QMainWindow):
         self.options_hint.setWordWrap(True)
         option(self.preserve_icc, "icc", "ICC 색상 프로파일", "기본값은 유지입니다. 원본 색상을 해석하는 ICC를 영상과 함께 저장하며 Philips 원본 형식 저장에도 적용합니다. 제외하면 압축 데이터가 같아도 색상이 달라질 수 있습니다. 원본에 ICC가 없으면 임의로 추가하지 않습니다. 원본에 있는데 보존할 수 없는 경우 오류로 안내합니다.\n\nICC 내부 설명·제조사 정보도 복사되므로 기존과 같이 별도 검토 상태로 기록합니다. 이 옵션은 프로파일 보존 여부이며 조직 픽셀을 다른 색공간으로 변환하지 않습니다.", 4, 0)
         self.options_hint.setObjectName("hint")
-        options.addWidget(self.options_hint, 3, 0)
+        options.addWidget(self.options_hint, 9, 0)
         self.advanced_toggle = QToolButton()
         self.advanced_toggle.setText("세부 설정 보기")
         self.advanced_toggle.setCheckable(True)
@@ -324,7 +329,7 @@ class Window(QMainWindow):
         self.advanced_toggle.toggled.connect(lambda checked: self.advanced_toggle.setText("세부 설정 접기" if checked else "세부 설정 보기"))
         options.addWidget(self.advanced_toggle, 6, 0)
         options.addWidget(self.advanced_box, 7, 0)
-        options.setRowStretch(9, 1)
+        options.setRowStretch(10, 1)
         settings_scroll = QScrollArea()
         settings_scroll.setWidgetResizable(True)
         settings_scroll.setWidget(self.options_box)
@@ -461,6 +466,8 @@ class Window(QMainWindow):
         self.storage_choice.setEnabled(images)
         self.structure.setEnabled(images)
         native = self.storage_choice.currentData() == "native"
+        self.native_full_verify.setEnabled(images and native)
+        self.info_buttons["native_verify"].setEnabled(images and native)
         if images and native:
             self.structure.setCurrentIndex(self.structure.findData(True))
             self.structure.setEnabled(False)
@@ -490,6 +497,7 @@ class Window(QMainWindow):
         return {"export_image": self.export_image.isChecked(), "export_csv": self.export_csv.isChecked(),
                 "rename_output": self.rename_output.isChecked(),
                 "preserve_icc": self.preserve_icc.isChecked(),
+                "native_full_verify": self.native_full_verify.isChecked() if self.storage_choice.currentData() == "native" else True,
                 "include_filename": self.include_filename.isChecked(), "preserve_mpp": self.preserve_mpp.isChecked(),
                 "compression": self.compression.currentData(), "pyramid": self.structure.currentData()}
 
@@ -803,7 +811,7 @@ class Window(QMainWindow):
                   if report.get("source_vendor") == "philips" and report["format"] != "philips-isyntax" and "philips_display_origin" in report else []),
                 "원본 개인정보 태그·라벨·매크로 제외; ICC는 아래 상태 참조",
                 "압축: " + ({"philips-native-preserved": "Philips 원본 압축 유지", "jpeg2000-lossless": "JPEG 2000 무손실", "jpeg-preserved": "원본 JPEG 유지", "deflate-lossless": "무손실 Deflate", "jpeg-reencoded-q90": "JPEG 재압축 Q90 (손실)"}.get(report["compression"], report["compression"])),
-                (f"전체 JPEG 데이터 일치 · {report['verified_tiles']:,}개 구간 인덱스 재생성 · 모든 레벨의 표본 영역 검사" if report["format"] == "hamamatsu-ndpi" else f"전체 압축 블록 일치: {report['verified_tiles']:,}개 · 영상 읽기는 일부 영역 검사" if report["format"] == "philips-isyntax" else f"전체 타일 검증: {report['verified_tiles']:,}개 통과"),
+                ("전체 데이터 검증 생략 · 메타데이터·구조 및 각 레벨 표본 영상 검사 완료" if report.get("native_full_verify") is False else f"전체 JPEG 데이터 일치 · {report['verified_tiles']:,}개 구간 인덱스 재생성 · 모든 레벨의 표본 영역 검사" if report["format"] == "hamamatsu-ndpi" else f"전체 압축 블록 일치: {report['verified_tiles']:,}개 · 영상 읽기는 일부 영역 검사" if report["format"] == "philips-isyntax" else f"전체 타일 검증: {report['verified_tiles']:,}개 통과"),
                 "영상 개인정보 검토: " + ("사용자가 확인함" if report["pixel_review_asserted_by_caller"] else "추가 검토 필요"),
                 "", (f"ICC: 원본 포함 ({report.get('icc_profile_bytes', 0):,} bytes) · ICC 내부 정보 별도 검토 필요"
                        if report.get("icc_profile_copied") else "ICC: 미포함 (원본에 없거나 제외 선택)"),
