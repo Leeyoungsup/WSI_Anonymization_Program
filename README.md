@@ -14,6 +14,10 @@ SVS·NDPI를 **표준 피라미드 TIFF**로 내보냅니다. 최대 해상도�
 
 ### 설치용 EXE (1.10.2)
 
+설치 과정에 별도의 약관 동의 화면은 없습니다. Philips 약관의 **한국어 참고 번역과 영문 원문**은 설치 폴더와 시작 메뉴에서 열 수 있습니다. 번역은 Philips의 공식 번역이 아닙니다. 원본 SDK 약관은 그대로 보존하며, 표시용 사본만 Windows-1252에서 UTF-8로 변환해 따옴표·글머리표 깨짐을 방지합니다. `release/PHILIPS_EULA_KO.txt`, `PHILIPS_EULA_EN.txt`, `PHILIPS_EULA_KO_EN.txt`도 별도로 배포됩니다. 동의 화면 제거는 SDK 사용·배포 조건을 변경하거나 사용권을 부여하지 않습니다.
+
+설치 전 안내는 EXE 옆에 별도로 제공하는 `release/MeDIAuto_WSI_User_Guide_KO.pdf`의 **2쪽 ‘설치 및 실행’**을 확인하세요. 배포할 때 설치 EXE와 이 PDF를 함께 전달합니다.
+
 `release/MeDIAuto-WSI-1.10.2-Windows-x64-Setup.exe`를 실행하면 압축 해제 없이 설치합니다. 메인 프로그램, Philips 전용 Python 3.7/SDK와 스크린샷 사용자 가이드 PDF를 함께 설치하며, Python이나 Conda를 별도로 설치할 필요가 없습니다. Windows 10 이상 x64용이며 현재 사용자 계정의 `%LOCALAPPDATA%\Programs\MeDIAuto WSI`에 설치합니다.
 
 설치 시 SDK 이용약관을 확인하고, 원하면 바탕화면 바로가기를 선택합니다. 시작 메뉴의 **MeDIAuto WSI**에서 프로그램·사용자 가이드·제거 기능을 사용할 수 있습니다. 설치 후에도 프로그램 옆 `philips` 폴더를 유지해야 합니다. 별도 출력 폴더의 결과 파일은 제거 대상이 아닙니다. 설치 파일에는 코드서명이 적용되어 있지 않습니다.

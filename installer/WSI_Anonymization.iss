@@ -15,6 +15,8 @@ AppName=MeDIAuto WSI Anonymization
 AppVersion={#AppVersion}
 AppPublisher=MeDIAuto
 DefaultDirName={localappdata}\Programs\MeDIAuto WSI
+; Always allow choosing a destination, including when upgrading an existing install.
+DisableDirPage=no
 DefaultGroupName=MeDIAuto WSI
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64os
@@ -28,7 +30,6 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\WSI_Anonymization.exe
 SetupIconFile={#PayloadDir}\setup.ico
 InfoBeforeFile={#PayloadDir}\INSTALL_README.txt
-LicenseFile={#PayloadDir}\philips\EULA.txt
 CloseApplications=no
 RestartApplications=no
 DisableProgramGroupPage=yes
@@ -47,6 +48,7 @@ Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 [Icons]
 Name: "{group}\MeDIAuto WSI"; Filename: "{app}\WSI_Anonymization.exe"; WorkingDir: "{app}"
 Name: "{group}\사용자 가이드"; Filename: "{app}\MeDIAuto_WSI_User_Guide_KO.pdf"
+Name: "{group}\Philips 약관 (한국어 참고 번역 및 영문)"; Filename: "{app}\PHILIPS_EULA_KO_EN.txt"
 Name: "{group}\제거"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\MeDIAuto WSI"; Filename: "{app}\WSI_Anonymization.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
